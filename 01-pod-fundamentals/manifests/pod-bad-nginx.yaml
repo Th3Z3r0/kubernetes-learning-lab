@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+
+metadata:
+  name: my-bad-nginx
+  namespace: myk8s
+
+spec:
+  containers:
+    - name: nginx
+      image: nginx:this-image-does-not-exist-12345
