@@ -234,7 +234,7 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 
 ### Completed
 
-- Lesson 01 — Pod Fundamentals
+####Lesson 01 — Pod Fundamentals
 * Pod basic structure
 * Pod lifecycle
 * Scheduler role
@@ -249,7 +249,7 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 * Using `kubectl describe`
 * Inspecting Pod events
 
-- Lesson 02 — Deployment and ReplicaSet
+####Lesson 02 — Deployment and ReplicaSet
 * Reconciliation and self-healing
 * Scaling workloads
 * Labels and selectors
