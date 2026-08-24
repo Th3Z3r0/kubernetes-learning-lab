@@ -25,7 +25,7 @@ Each lesson folder contains a detailed `README.md` with the concept, lab steps, 
 | Lesson | Topic                                             | Status    |
 | ------ | ------------------------------------------------- | --------- |
 | 01     | [Pod Fundamentals](01-pod-fundamentals/README.md) | Completed |
-| 02     | Deployment and ReplicaSet                         | Next      |
+| 02     | [Deployment and ReplicaSet](02-deployment-replicaset/README.md)                         | Completed |
 | 03     | Labels, Selectors, and Service                    | Planned   |
 | 04     | ConfigMap and Secret                              | Planned   |
 | 05     | Storage: Volume, PV, and PVC                      | Planned   |
@@ -234,6 +234,7 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 
 ### Completed
 
+- Lesson 01 — Pod Fundamentals
 * Pod basic structure
 * Pod lifecycle
 * Scheduler role
@@ -248,23 +249,18 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 * Using `kubectl describe`
 * Inspecting Pod events
 
+- Lesson 02 — Deployment and ReplicaSet
+* Reconciliation and self-healing
+* Scaling workloads
+* Labels and selectors
+* ReplicaSet ownership
+* pod-template-hash
+* Rolling updates
+* Rollback
+
 ### Next
 
-**Lesson 02 — Deployment and ReplicaSet**
-
-The main question for the next lesson is:
-
-> Why does a standalone Pod disappear permanently when deleted, while a Pod managed by a Deployment comes back automatically?
-
-The next relationship to understand is:
-
-```text
-Deployment
-    ↓
-ReplicaSet
-    ↓
-Pod
-```
+**Lesson 03 — Labels, Selectors, and Service**
 
 ## Key Learning Principle
 
