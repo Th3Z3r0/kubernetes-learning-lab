@@ -1,62 +1,46 @@
-# Lesson 01 — Kubernetes Pod Fundamentals
+# Lesson 01 — Pod Fundamentals
 
-## Learning Objectives
+## Objective
 
-After completing this lab, I should understand:
-
-* What a Kubernetes **Pod** is
-* The difference between a Kubernetes **object** and a Kubernetes **component**
-* What happens after running `kubectl apply`
-* How Kubernetes decides which Node runs a Pod
-* The roles of the **API Server, Scheduler, kubelet, and container runtime**
-* The difference between **desired state (`spec`)** and **observed state (`status`)**
-* How to troubleshoot a Pod using `kubectl get` and `kubectl describe`
-* What `ErrImagePull` and `ImagePullBackOff` mean
+Understand what a Kubernetes Pod is, how it is created, which Kubernetes components are involved, and how to troubleshoot basic Pod failures.
 
 ---
 
-# 1. What is a Pod?
+## 1. What is a Pod?
 
-A **Pod** is the smallest deployable unit in Kubernetes.
+A Pod is the smallest deployable unit in Kubernetes.
 
-A Pod contains one or more containers.
+A Pod can contain one or more containers.
 
 ```text
 Pod
-└── Container
-    └── nginx
+└── nginx container
 ```
 
 In this lab:
 
 ```text
-my-nginx Pod
-└── nginx container
+my-nginx
+└── nginx
 ```
 
-Normally, applications should not be managed using standalone Pods in production. Higher-level objects such as **Deployments** are normally used to manage Pods.
-
-We will learn why in Lesson 02.
+For production applications, standalone Pods are usually not created directly. Higher-level objects such as Deployments are typically used to manage Pods.
 
 ---
 
-# 2. Kubernetes Object vs Component
+## 2. Kubernetes Object vs Kubernetes Component
 
-This distinction is important.
+### Kubernetes Object
 
-## Kubernetes Object
-
-An object describes **what I want Kubernetes to manage**.
+An object describes what I want Kubernetes to manage.
 
 Examples:
 
-```text
-Pod
-Deployment
-Service
-ConfigMap
-Secret
-```
+* Pod
+* Deployment
+* Service
+* ConfigMap
+* Secret
 
 For this lesson:
 
@@ -64,35 +48,37 @@ For this lesson:
 Object = Pod
 ```
 
-## Kubernetes Components
+### Kubernetes Components
 
-Components are parts of Kubernetes that make the desired state happen.
+Components make the desired state happen.
 
 Important components in this lesson:
 
 ```text
-kube-apiserver
-scheduler
+API Server
+Scheduler
 kubelet
-container runtime
+Container Runtime
 ```
 
 My cluster uses:
 
 ```text
-containerd
+Container Runtime = containerd
 ```
 
-A useful way to remember this:
+Mental model:
 
-> **Object = WHAT I want**
-> **Component = HOW Kubernetes makes it happen**
+```text
+Object     = WHAT I want
+Component  = HOW Kubernetes makes it happen
+```
 
 ---
 
-# 3. My Lab Environment
+## 3. Lab Environment
 
-The lab uses a kind Kubernetes cluster with three Nodes:
+Cluster:
 
 ```text
 kind-control-plane
@@ -100,25 +86,13 @@ kind-worker
 kind-worker2
 ```
 
-Cluster architecture:
-
-```text
-Kubernetes Cluster
-│
-├── kind-control-plane
-│
-├── kind-worker
-│
-└── kind-worker2
-```
-
-Namespace used for the lab:
+Namespace:
 
 ```text
 myk8s
 ```
 
-Check the Nodes:
+Check Nodes:
 
 ```bash
 kubectl get nodes -o wide
@@ -132,7 +106,7 @@ kubectl get pods -n myk8s -o wide
 
 ---
 
-# 4. Basic Pod Manifest
+## 4. Pod Manifest
 
 File:
 
@@ -154,19 +128,19 @@ spec:
       image: nginx:latest
 ```
 
-Apply it:
+Apply:
 
 ```bash
 kubectl apply -f manifests/pod-nginx.yaml
 ```
 
-Check the Pod:
+Verify:
 
 ```bash
 kubectl get pod my-nginx -n myk8s -o wide
 ```
 
-Inspect it:
+Inspect:
 
 ```bash
 kubectl describe pod my-nginx -n myk8s
@@ -174,11 +148,9 @@ kubectl describe pod my-nginx -n myk8s
 
 ---
 
-# 5. Mandatory Pod Manifest Concepts
+## 5. Basic Pod Structure
 
-I do **not** need to memorize every Pod parameter.
-
-For now, I should understand this basic structure:
+The main fields I need to understand are:
 
 ```yaml
 apiVersion:
@@ -187,23 +159,25 @@ metadata:
 spec:
 ```
 
-### `apiVersion`
+### apiVersion
+
+Defines which Kubernetes API is used.
 
 ```yaml
 apiVersion: v1
 ```
 
-Defines which Kubernetes API is used for the object.
+### kind
 
-### `kind`
+Defines the object type.
 
 ```yaml
 kind: Pod
 ```
 
-Defines the type of Kubernetes object.
+### metadata
 
-### `metadata`
+Defines the identity of the object.
 
 ```yaml
 metadata:
@@ -211,9 +185,7 @@ metadata:
   namespace: myk8s
 ```
 
-Identifies the object.
-
-Important metadata fields to learn first:
+Important metadata fields for now:
 
 ```text
 name
@@ -221,30 +193,24 @@ namespace
 labels
 ```
 
-### `spec`
+### spec
+
+Defines the desired state.
 
 ```yaml
 spec:
   containers:
 ```
 
-Describes the **desired state**.
+For this Pod, the desired state is:
 
-For this Pod:
-
-> I want Kubernetes to run an nginx container.
+> Run an nginx container.
 
 ---
 
-# 6. What Happens After `kubectl apply`?
+## 6. What Happens After `kubectl apply`
 
-When I run:
-
-```bash
-kubectl apply -f manifests/pod-nginx.yaml
-```
-
-the simplified workflow is:
+Simplified workflow:
 
 ```text
 kubectl
@@ -253,12 +219,12 @@ kubectl
 API Server
    │
    ▼
-Pod desired state recorded
+Pod object created
    │
    ▼
 Scheduler
    │
-   │ selects a Node
+   │ chooses Node
    ▼
 Worker Node
    │
@@ -272,129 +238,67 @@ containerd
 nginx container
 ```
 
-The important responsibilities are:
+Responsibilities:
 
-| Component  | Main Responsibility                             |
-| ---------- | ----------------------------------------------- |
-| `kubectl`  | Sends my request to Kubernetes                  |
-| API Server | Entry point for Kubernetes API operations       |
-| Scheduler  | Decides **WHERE** an unscheduled Pod should run |
-| kubelet    | Makes sure the Pod runs on its assigned Node    |
-| containerd | Manages the actual container                    |
+| Component  | Responsibility                              |
+| ---------- | ------------------------------------------- |
+| kubectl    | Sends the request                           |
+| API Server | Receives and manages Kubernetes API objects |
+| Scheduler  | Decides where the Pod should run            |
+| kubelet    | Ensures the Pod runs on the assigned Node   |
+| containerd | Manages the actual container                |
 
-A useful shortcut:
+Simple way to remember:
 
 ```text
-Scheduler → WHERE?
-
-kubelet → RUN IT
-
+Scheduler  → WHERE
+kubelet    → RUN IT
 containerd → CONTAINER
 ```
 
 ---
 
-# 7. Scheduler
+## 7. Scheduling Result
 
-In my experiment, Kubernetes selected:
+In this lab, Kubernetes scheduled the Pod on:
 
 ```text
 kind-worker2
 ```
-
-The Pod showed:
-
-```text
-Node: kind-worker2
-```
-
-The Event showed:
-
-```text
-Successfully assigned myk8s/my-nginx to kind-worker2
-```
-
-Therefore:
-
-> `kubectl` did not choose the Worker Node.
-
-The **Kubernetes Scheduler** selected the Node.
-
-After scheduling, the Pod contains information similar to:
-
-```yaml
-spec:
-  nodeName: kind-worker2
-```
-
----
-
-# 8. kubelet
-
-After the Scheduler assigns the Pod to a Node, the **kubelet** on that Node becomes responsible for making the Pod run.
-
-```text
-Scheduler
-    │
-    │ assigns Pod
-    ▼
-kind-worker2
-    │
-    ▼
-kubelet
-    │
-    ▼
-container runtime
-```
-
-The kubelet works with the container runtime to create and run containers.
-
-My cluster uses:
-
-```text
-containerd
-```
-
----
-
-# 9. Pod IP vs Node IP
-
-In my lab:
-
-```text
-Node:
-kind-worker2
 
 Node IP:
+
+```text
 172.18.0.2
+```
 
 Pod IP:
+
+```text
 10.10.0.244
 ```
 
-The relationship is:
+Relationship:
 
 ```text
 kind-worker2
 172.18.0.2
-     │
-     └── my-nginx
-           10.10.0.244
+    │
+    └── my-nginx
+        10.10.0.244
 ```
 
-The **Node IP and Pod IP are different**.
-
-Kubernetes networking and how Pods receive IP addresses will be covered in a later lesson.
+The Node IP and Pod IP are different.
 
 ---
 
-# 10. Desired State vs Actual State
+## 8. Desired State vs Observed State
 
-One of the most important Kubernetes concepts is:
+This is one of the most important Kubernetes concepts.
 
 ```text
-spec   = what I WANT
-status = what Kubernetes OBSERVES
+spec   = what I want
+status = what Kubernetes currently observes
 ```
 
 Example:
@@ -405,9 +309,11 @@ spec:
     - image: nginx:latest
 ```
 
-means:
+Desired state:
 
-> I want nginx to run.
+```text
+Run nginx
+```
 
 Kubernetes may report:
 
@@ -416,29 +322,31 @@ status:
   phase: Running
 ```
 
-meaning the workload is currently running.
+Observed state:
 
-Conceptually:
+```text
+nginx is running
+```
+
+Mental model:
 
 ```text
 Desired State
-    SPEC
-      │
-      ▼
- Kubernetes
-      │
-      ▼
+    ↓
+   spec
+    ↓
+Kubernetes
+    ↓
 Observed State
-    STATUS
+    ↓
+  status
 ```
-
-Kubernetes continuously works toward making the actual state match the desired state.
 
 ---
 
-# 11. Important Pod Status Information
+## 9. Important Pod Status Information
 
-When troubleshooting a Pod, I should initially focus on:
+When troubleshooting, focus on:
 
 ```text
 Name
@@ -447,31 +355,33 @@ Node
 Status
 IP
 
-Containers:
+Containers
   Image
   State
   Ready
   Restart Count
 
-Conditions:
-  Ready
-  ContainersReady
+Conditions
   PodScheduled
+  ContainersReady
+  Ready
 
 Events
 ```
 
-I do **not** need to understand every field returned by:
+Do not try to understand every field returned by:
 
 ```bash
-kubectl get pod my-nginx -o yaml
+kubectl get pod my-nginx -n myk8s -o yaml
 ```
+
+Kubernetes automatically adds many default and internal fields.
 
 ---
 
-# 12. Healthy Pod
+## 10. Healthy Pod
 
-A healthy Pod may show:
+A healthy Pod should look similar to:
 
 ```text
 READY   STATUS
@@ -482,11 +392,11 @@ READY   STATUS
 
 ```text
 1 ready container
-─────────────────
+-----------------
 1 total container
 ```
 
-Important conditions may show:
+Important conditions:
 
 ```text
 PodScheduled       True
@@ -494,18 +404,9 @@ ContainersReady    True
 Ready              True
 ```
 
-This tells me:
-
-```text
-Scheduled        ✓
-Container started ✓
-Container ready   ✓
-Pod ready         ✓
-```
-
 ---
 
-# 13. Broken Image Lab
+## 11. Broken Image Lab
 
 File:
 
@@ -513,31 +414,41 @@ File:
 manifests/pod-bad-nginx.yaml
 ```
 
-The Pod intentionally uses an invalid image:
+Example:
 
 ```yaml
-image: nginx:this-image-does-not-exist-12345
+apiVersion: v1
+kind: Pod
+
+metadata:
+  name: my-bad-nginx
+  namespace: myk8s
+
+spec:
+  containers:
+    - name: nginx
+      image: nginx:this-image-does-not-exist-12345
 ```
 
-Apply it:
+Apply:
 
 ```bash
 kubectl apply -f manifests/pod-bad-nginx.yaml
 ```
 
-Watch the Pod:
+Watch:
 
 ```bash
 kubectl get pod my-bad-nginx -n myk8s -w
 ```
 
-The Pod eventually reports:
+Expected failure:
 
 ```text
 ErrImagePull
 ```
 
-and then:
+followed by:
 
 ```text
 ImagePullBackOff
@@ -545,47 +456,42 @@ ImagePullBackOff
 
 ---
 
-# 14. Understanding `ImagePullBackOff`
+## 12. Understanding ImagePullBackOff
 
-The Pod creation workflow was:
+Failure flow:
 
 ```text
-Pod submitted
-     │
-     ▼
-Scheduler selected Node        ✓
-     │
-     ▼
-kubelet received Pod           ✓
-     │
-     ▼
-containerd tried image pull
-     │
-     ▼
-Image not found                ✗
-     │
-     ▼
+Pod created
+   │
+   ▼
+Scheduler selects Node
+   │
+   ▼
+kubelet receives Pod
+   │
+   ▼
+containerd tries to pull image
+   │
+   ▼
+Image does not exist
+   │
+   ▼
 ErrImagePull
-     │
-     ▼
+   │
+   ▼
 Retry
-     │
-     ▼
-Failure again
-     │
-     ▼
+   │
+   ▼
 ImagePullBackOff
 ```
 
-`ImagePullBackOff` does **not** mean Kubernetes stopped permanently.
-
-It means repeated image pulls failed and Kubernetes is backing off before retrying again.
+`ImagePullBackOff` means Kubernetes has failed to pull the image repeatedly and waits before retrying again.
 
 ---
 
-# 15. Troubleshooting Method
+## 13. Troubleshooting Workflow
 
-When an application Pod is not running, start with:
+Start with:
 
 ```bash
 kubectl get pods -n myk8s
@@ -597,7 +503,7 @@ Then:
 kubectl describe pod <pod-name> -n myk8s
 ```
 
-Pay special attention to:
+Focus on:
 
 ```text
 Status
@@ -605,7 +511,7 @@ Conditions
 Events
 ```
 
-For the broken nginx Pod, Events showed:
+For the broken image example:
 
 ```text
 Scheduled
@@ -621,133 +527,95 @@ BackOff
 ImagePullBackOff
 ```
 
-This allowed me to determine:
+This tells me:
 
 ```text
 Scheduling problem?      No
-Node selection problem?  No
+Node problem?            No
 Application crash?       No
-Image retrieval problem? YES
+Image pull problem?      Yes
 ```
-
-The important lesson is:
-
-> **Troubleshoot the Kubernetes lifecycle and identify which stage failed instead of randomly restarting components.**
 
 ---
 
-# 16. Container Restart vs Pod Recreation
+## 14. Container Restart vs Pod Recreation
 
-A standalone Pod has:
+A standalone Pod normally has:
 
 ```yaml
 restartPolicy: Always
 ```
 
-by default.
-
-This means if the **container process fails**, kubelet can restart the container.
+If the container crashes:
 
 ```text
-Pod
-└── nginx crashes
-       │
-       ▼
-     kubelet
-       │
-       ▼
-restart container
+Container crashes
+      ↓
+kubelet
+      ↓
+Restart container
 ```
 
-However, if I delete the standalone Pod itself:
+But if the Pod itself is deleted:
 
 ```bash
 kubectl delete pod my-nginx -n myk8s
 ```
 
-the Pod does **not** automatically return.
+then:
 
 ```text
 Standalone Pod deleted
-       │
-       ▼
-     Gone
+       ↓
+      Gone
 ```
 
-There is no higher-level controller maintaining the desired number of Pods.
+The Pod is not automatically recreated because there is no higher-level controller managing it.
 
-This is one reason production applications normally use a **Deployment** instead of creating standalone Pods.
+This will be covered in Lesson 02 with Deployment and ReplicaSet.
 
 ---
 
-# 17. Fields Kubernetes Adds Automatically
-
-My small manifest became a much larger object when running:
+## 15. Commands Learned
 
 ```bash
+kubectl get nodes -o wide
+
+kubectl get pods -n myk8s
+
+kubectl get pods -n myk8s -o wide
+
+kubectl describe pod my-nginx -n myk8s
+
 kubectl get pod my-nginx -n myk8s -o yaml
-```
 
-Kubernetes automatically added/defaulted fields such as:
+kubectl get pods -n myk8s -w
 
-```text
-uid
-resourceVersion
-generation
-creationTimestamp
-nodeName
-restartPolicy
-schedulerName
-serviceAccountName
-dnsPolicy
-terminationGracePeriodSeconds
-status
-conditions
-containerStatuses
-podIP
-hostIP
-```
+kubectl exec -it my-nginx -n myk8s -- /bin/sh
 
-I do **not** need to manually specify all of these.
-
-A useful rule:
-
-```text
-My manifest
-    │
-    ├── What I explicitly require
-    │
-    ▼
-Kubernetes API
-    │
-    ├── defaults
-    ├── generated information
-    └── observed status
-    │
-    ▼
-Full Kubernetes Object
+kubectl delete pod my-nginx -n myk8s
 ```
 
 ---
 
-# 18. What I Must Remember From Lesson 01
+## 16. What I Must Remember
 
-### Objects
+### Pod
 
 ```text
-Pod = smallest deployable Kubernetes workload unit
+Pod = smallest deployable workload unit
 ```
 
 ### Components
 
 ```text
-API Server  → API entry point
+API Server  → receives/manages API objects
 
 Scheduler   → decides WHERE the Pod runs
 
-kubelet     → ensures the Pod runs on the assigned Node
+kubelet     → makes sure the Pod runs on the Node
 
-containerd  → manages the actual container
+containerd  → manages the container
 ```
 
 ### Object structure
@@ -757,7 +625,7 @@ metadata → Who am I?
 
 spec     → What do I want?
 
-status   → What is actually happening?
+status   → What is happening now?
 ```
 
 ### Troubleshooting
@@ -771,90 +639,31 @@ Conditions
        ↓
 Events
        ↓
-Find which lifecycle stage failed
-```
-
-### Important distinction
-
-```text
-Container fails
-     ↓
-kubelet can restart container
-
-Standalone Pod deleted
-     ↓
-Pod is NOT automatically recreated
+Find the failed stage
 ```
 
 ---
 
-# 19. Commands Learned
+## 17. Key Takeaway
 
-```bash
-# View Nodes
-kubectl get nodes -o wide
+Do not memorize every YAML parameter.
 
-# View Pods
-kubectl get pods -n myk8s
-kubectl get pods -n myk8s -o wide
-
-# Inspect a Pod
-kubectl describe pod my-nginx -n myk8s
-
-# View the complete Kubernetes object
-kubectl get pod my-nginx -n myk8s -o yaml
-
-# Watch Pod changes
-kubectl get pods -n myk8s -w
-
-# Execute a command inside a container
-kubectl exec -it my-nginx -n myk8s -- /bin/sh
-
-# Delete a Pod
-kubectl delete pod my-nginx -n myk8s
-```
-
----
-
-# 20. Lesson 01 Mental Model
-
-The most important diagram from this lesson:
+Focus on understanding:
 
 ```text
-                    Kubernetes Cluster
-
-                        Control Plane
-                             │
-kubectl ──► API Server ──► Scheduler
-                             │
-                             │ selects Node
-                             ▼
-                       kind-worker2
-                             │
-                          kubelet
-                             │
-                        containerd
-                             │
-                             ▼
-                         my-nginx
-                             │
-                         nginx container
-```
-
-And the most important Kubernetes concept:
-
-```text
-        DESIRED STATE
-             spec
-              │
-              ▼
-         Kubernetes
-              │
-        reconciliation
-              │
-              ▼
-        OBSERVED STATE
-            status
+What is the object?
+        ↓
+Why does it exist?
+        ↓
+Who manages it?
+        ↓
+Where does it run?
+        ↓
+What does spec request?
+        ↓
+What does status report?
+        ↓
+Where did the lifecycle fail?
 ```
 
 ---
@@ -863,11 +672,11 @@ And the most important Kubernetes concept:
 
 **Lesson 02 — Deployment and ReplicaSet**
 
-The next question to answer is:
+Next question:
 
-> If Kubernetes is designed for self-healing, why did my standalone Pod not come back after I deleted it?
+> Why does a standalone Pod disappear when deleted, but a Pod managed by a Deployment gets recreated automatically?
 
-We will learn:
+Next relationship:
 
 ```text
 Deployment
@@ -876,7 +685,3 @@ ReplicaSet
     ↓
 Pod
 ```
-
-and introduce one of the most important concepts in Kubernetes:
-
-**Controllers and reconciliation.**
