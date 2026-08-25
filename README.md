@@ -26,8 +26,8 @@ Each lesson folder contains a detailed `README.md` with the concept, lab steps, 
 | ------ | ------------------------------------------------- | --------- |
 | 01     | [Pod Fundamentals](01-pod-fundamentals/README.md) | Completed |
 | 02     | [Deployment and ReplicaSet](02-deployment-replicaset/README.md)                         | Completed |
-| 03     | Labels, Selectors, and Service                    | Next      |
-| 04     | ConfigMap and Secret                              | Planned   |
+| 03     | [Labels, Selectors, and Service](03-labels-selectors-service/README.md)                    | Completed |
+| 04     | ConfigMap and Secret                              | Next      |
 | 05     | Storage: Volume, PV, and PVC                      | Planned   |
 | 06     | Ingress and External Access                       | Planned   |
 | 07     | RBAC and Kubernetes Security                      | Planned   |
@@ -258,9 +258,21 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 * Rolling updates
 * Rollback
 
+**Lesson 03 — Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS**
+- Labels and selectors
+- ClusterIP Service
+- `port` vs `targetPort`
+- EndpointSlice
+- Service troubleshooting
+- kube-proxy and Service dataplane
+- Backend traffic distribution
+- CoreDNS and Service discovery
+- Same-namespace and cross-namespace DNS
+- Basic DNS troubleshooting
+
 ### Next
 
-**Lesson 03 — Labels, Selectors, and Service**
+**Lesson 04 — ConfigMap and Secret**
 
 ## Key Learning Principle
 
