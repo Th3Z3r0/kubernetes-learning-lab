@@ -22,16 +22,17 @@ Each lesson folder contains a detailed `README.md` with the concept, lab steps, 
 
 ## Learning Path
 
-| Lesson | Topic                                             | Status    |
-| ------ | ------------------------------------------------- | --------- |
-| 01     | [Pod Fundamentals](01-pod-fundamentals/README.md) | Completed |
-| 02     | [Deployment and ReplicaSet](02-deployment-replicaset/README.md)                         | Completed |
-| 03     | [Labels, Selectors, and Service](03-labels-selectors-service/README.md)                    | Completed |
-| 04     | ConfigMap and Secret                              | Next      |
-| 05     | Storage: Volume, PV, and PVC                      | Planned   |
-| 06     | Ingress and External Access                       | Planned   |
-| 07     | RBAC and Kubernetes Security                      | Planned   |
-| 08     | NetworkPolicy                                     | Planned   |
+| Lesson | Topic | Status |
+| ------ | ----- | ------ |
+| 00 | [Prerequisites](00-prerequisites/README.md) | Completed |
+| 01 | [Pod Fundamentals](01-pod-fundamentals/README.md) | Completed |
+| 02 | [Deployment and ReplicaSet](02-deployment-replicaset/README.md) | Completed |
+| 03 | [Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS](03-labels-selectors-service/README.md) | Completed |
+| 04 | ConfigMap and Secret | Next |
+| 05 | Storage: Volume, PV, and PVC | Planned |
+| 06 | Ingress and External Access | Planned |
+| 07 | RBAC and Kubernetes Security | Planned |
+| 08 | NetworkPolicy | Planned |
 
 ## Core Kubernetes Relationships
 
@@ -79,14 +80,14 @@ Container
 
 ### Component Responsibilities
 
-| Component         | Responsibility                                    |
-| ----------------- | ------------------------------------------------- |
-| `kubectl`         | Sends requests to the Kubernetes API              |
-| API Server        | Receives requests and manages Kubernetes objects  |
-| Scheduler         | Selects a suitable Node for unscheduled Pods      |
-| Controllers       | Continuously reconcile desired and observed state |
-| kubelet           | Ensures assigned Pods are running on a Node       |
-| Container Runtime | Pulls images and manages containers               |
+| Component | Responsibility |
+| --------- | -------------- |
+| `kubectl` | Sends requests to the Kubernetes API |
+| API Server | Receives requests and manages Kubernetes objects |
+| Scheduler | Selects a suitable Node for unscheduled Pods |
+| Controllers | Continuously reconcile desired and observed state |
+| kubelet | Ensures assigned Pods are running on a Node |
+| Container Runtime | Pulls images and manages containers |
 
 The lab uses `containerd` as the container runtime.
 
@@ -132,6 +133,8 @@ kind-worker
 kind-worker2
 ```
 
+Before starting the lessons, prepare the namespace using [Lesson 00 — Prerequisites](00-prerequisites/README.md).
+
 ## Common Commands
 
 Check cluster Nodes:
@@ -172,10 +175,17 @@ kubectl get events -n myk8s --sort-by=.lastTimestamp
 
 ## Repository Structure
 
+Current repository structure:
+
 ```text
 kubernetes-learning-lab/
 │
 ├── README.md
+│
+├── 00-prerequisites/
+│   ├── README.md
+│   └── manifests/
+│       └── namespace-myk8s.yaml
 │
 ├── 01-pod-fundamentals/
 │   ├── README.md
@@ -186,31 +196,15 @@ kubernetes-learning-lab/
 ├── 02-deployment-replicaset/
 │   ├── README.md
 │   └── manifests/
+│       └── deployment-web.yaml
 │
-├── 03-labels-selectors-service/
-│   ├── README.md
-│   └── manifests/
-│
-├── 04-configmap-secret/
-│   ├── README.md
-│   └── manifests/
-│
-├── 05-storage/
-│   ├── README.md
-│   └── manifests/
-│
-├── 06-ingress/
-│   ├── README.md
-│   └── manifests/
-│
-├── 07-rbac-security/
-│   ├── README.md
-│   └── manifests/
-│
-└── 08-networkpolicy/
+└── 03-labels-selectors-service/
     ├── README.md
     └── manifests/
+        └── service-web.yaml
 ```
+
+Future lesson directories will be added when those lessons begin.
 
 ## Lesson Documentation Standard
 
@@ -233,6 +227,11 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 ## Current Progress
 
 ### Completed
+
+**Lesson 00 — Prerequisites**
+* Verify cluster access
+* Create the `myk8s` lab namespace
+* Make the lab reproducible from the repository
 
 **Lesson 01 — Pod Fundamentals**
 * Pod basic structure
@@ -259,16 +258,16 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 * Rollback
 
 **Lesson 03 — Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS**
-- Labels and selectors
-- ClusterIP Service
-- `port` vs `targetPort`
-- EndpointSlice
-- Service troubleshooting
-- kube-proxy and Service dataplane
-- Backend traffic distribution
-- CoreDNS and Service discovery
-- Same-namespace and cross-namespace DNS
-- Basic DNS troubleshooting
+* Labels and selectors
+* ClusterIP Service
+* `port` vs `targetPort`
+* EndpointSlice
+* Service troubleshooting
+* kube-proxy and Service dataplane
+* Backend traffic distribution
+* CoreDNS and Service discovery
+* Same-namespace and cross-namespace DNS
+* Basic DNS troubleshooting
 
 ### Next
 
