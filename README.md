@@ -1,42 +1,75 @@
 # Kubernetes Learning Lab
 
-This repository contains hands-on Kubernetes learning notes, manifests, experiments, and troubleshooting exercises.
+This repository is a hands-on Kubernetes learning path built around real experiments, expected results, intentional failures, and troubleshooting.
 
-The goal is to understand Kubernetes objects, how they work together, which components manage them, and how to troubleshoot common failures without trying to memorize every YAML parameter.
+The goal is not to memorize YAML. The goal is to understand:
 
-## Learning Approach
+```text
+What is the object?
+Why does it exist?
+How does it relate to other objects?
+Which component manages it?
+How do I test it?
+What should I expect to see?
+How do I troubleshoot it when it fails?
+```
 
-For each topic, this lab focuses on:
+## How to Use This Repository
 
-* Why the object exists
-* What problem it solves
-* How it relates to other Kubernetes objects
-* Which Kubernetes components are involved
-* What is essential to understand
-* What can be learned later
-* How to create and inspect the object
-* How to break the workload intentionally
-* How to troubleshoot the resulting failure
+Run the lessons in order. Unless a lesson says otherwise, run commands from the repository root:
 
-Each lesson folder contains a detailed `README.md` with the concept, lab steps, observations, commands, troubleshooting notes, and key takeaways.
+```bash
+cd ~/kubernetes-learning-lab
+```
+
+Each lesson now has two documents:
+
+- `README.md` — concept notes, explanations, observations, and mental models
+- `LAB.md` — reproducible step-by-step lab with commands, testing steps, expected results, troubleshooting, cleanup, and required end state
+
+For someone following the repository from scratch, **use `LAB.md` as the primary runbook** and use `README.md` for deeper explanation.
+
+> Pod names, ReplicaSet hashes, IP addresses, ages, EndpointSlice names, and some timing will differ between clusters. Expected results describe the behavior to verify rather than requiring identical dynamic values.
 
 ## Learning Path
 
-| Lesson | Topic | Status |
-| ------ | ----- | ------ |
-| 00 | [Prerequisites](00-prerequisites/README.md) | Completed |
-| 01 | [Pod Fundamentals](01-pod-fundamentals/README.md) | Completed |
-| 02 | [Deployment and ReplicaSet](02-deployment-replicaset/README.md) | Completed |
-| 03 | [Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS](03-labels-selectors-service/README.md) | Completed |
-| 04 | [ConfigMap and Secret](04-configmap-secret/README.md) | Completed |
-| 05 | Storage: Volume, PV, and PVC | Next |
-| 06 | Ingress and External Access | Planned |
-| 07 | RBAC and Kubernetes Security | Planned |
-| 08 | NetworkPolicy | Planned |
+| Lesson | Topic | Theory Notes | Hands-on Lab | Status |
+|---|---|---|---|---|
+| 00 | Prerequisites | [README](00-prerequisites/README.md) | [LAB](00-prerequisites/LAB.md) | Completed |
+| 01 | Pod Fundamentals | [README](01-pod-fundamentals/README.md) | [LAB](01-pod-fundamentals/LAB.md) | Completed |
+| 02 | Deployment and ReplicaSet | [README](02-deployment-replicaset/README.md) | [LAB](02-deployment-replicaset/LAB.md) | Completed |
+| 03 | Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS | [README](03-labels-selectors-service/README.md) | [LAB](03-labels-selectors-service/LAB.md) | Completed |
+| 04 | ConfigMap and Secret | [README](04-configmap-secret/README.md) | [LAB](04-configmap-secret/LAB.md) | Completed |
+| 05 | Storage: Volume, PV, and PVC | — | — | Next |
+| 06 | Ingress and External Access | — | — | Planned |
+| 07 | RBAC and Kubernetes Security | — | — | Planned |
+| 08 | NetworkPolicy | — | — | Planned |
+
+## Reference Lab Environment
+
+The reference environment uses:
+
+- Kubernetes distribution: kind
+- Control plane: 1 node
+- Worker nodes: 2 nodes
+- Container runtime: containerd
+- Lab namespace: `myk8s`
+
+Reference node layout:
+
+```text
+kind-control-plane
+kind-worker
+kind-worker2
+```
+
+Lesson 00 includes a reproducible `kind-config.yaml` for creating the same three-node topology.
+
+Other Kubernetes clusters can also be used, but implementation-specific observations such as node names, kube-proxy behavior, networking addresses, and storage classes may differ.
 
 ## Core Kubernetes Relationships
 
-The main workload and networking relationships explored in this repository are:
+### Workload hierarchy
 
 ```text
 Deployment
@@ -48,17 +81,19 @@ Pod
 Container
 ```
 
-A Service provides stable network access to Pods:
+### Stable application networking
 
 ```text
 Service
     ↓
-Label Selector
+Selector
+    ↓
+EndpointSlice
     ↓
 Pods
 ```
 
-Application configuration can be provided separately from the container image:
+### Application configuration
 
 ```text
 ConfigMap / Secret
@@ -69,8 +104,6 @@ Pod
 ```
 
 ## Kubernetes Control Flow
-
-A simplified Kubernetes control flow looks like this:
 
 ```text
 kubectl
@@ -88,104 +121,38 @@ Container Runtime
 Container
 ```
 
-### Component Responsibilities
-
-| Component | Responsibility |
-| --------- | -------------- |
+| Component | Main responsibility |
+|---|---|
 | `kubectl` | Sends requests to the Kubernetes API |
-| API Server | Receives requests and manages Kubernetes objects |
+| API Server | Receives requests and exposes/manages Kubernetes API objects |
 | Scheduler | Selects a suitable Node for unscheduled Pods |
-| Controllers | Continuously reconcile desired and observed state |
-| kubelet | Ensures assigned Pods are running on a Node |
+| Controllers | Reconcile desired and observed state |
+| kubelet | Ensures assigned Pods are running on its Node |
 | Container Runtime | Pulls images and manages containers |
-
-The lab uses `containerd` as the container runtime.
 
 ## Important Mental Model
 
 ```text
 metadata = Who am I?
-
 spec     = What do I want?
-
 status   = What is actually happening?
 ```
 
-Kubernetes continuously tries to make the observed state match the desired state:
+Reconciliation:
 
 ```text
 Desired State
     ↓
    spec
     ↓
-Kubernetes Controllers
+Controllers
     ↓
 Observed State
     ↓
   status
 ```
 
-This reconciliation process is the foundation of Kubernetes behavior.
-
-## Lab Environment
-
-* Kubernetes distribution: kind
-* Control Plane: 1 node
-* Worker Nodes: 2 nodes
-* Container Runtime: containerd
-* Lab Namespace: `myk8s`
-
-The cluster currently contains:
-
-```text
-kind-control-plane
-kind-worker
-kind-worker2
-```
-
-Before starting the lessons, prepare the namespace using [Lesson 00 — Prerequisites](00-prerequisites/README.md).
-
-## Common Commands
-
-Check cluster Nodes:
-
-```bash
-kubectl get nodes -o wide
-```
-
-Check Pods in the lab namespace:
-
-```bash
-kubectl get pods -n myk8s -o wide
-```
-
-Inspect a Kubernetes object:
-
-```bash
-kubectl describe <resource> <name> -n myk8s
-```
-
-View the complete object definition:
-
-```bash
-kubectl get <resource> <name> -n myk8s -o yaml
-```
-
-Watch changes in real time:
-
-```bash
-kubectl get pods -n myk8s -w
-```
-
-View recent namespace events:
-
-```bash
-kubectl get events -n myk8s --sort-by=.lastTimestamp
-```
-
 ## Repository Structure
-
-Current repository structure:
 
 ```text
 kubernetes-learning-lab/
@@ -194,27 +161,34 @@ kubernetes-learning-lab/
 │
 ├── 00-prerequisites/
 │   ├── README.md
+│   ├── LAB.md
+│   ├── kind-config.yaml
 │   └── manifests/
 │       └── namespace-myk8s.yaml
 │
 ├── 01-pod-fundamentals/
 │   ├── README.md
+│   ├── LAB.md
 │   └── manifests/
 │       ├── pod-nginx.yaml
 │       └── pod-bad-nginx.yaml
 │
 ├── 02-deployment-replicaset/
 │   ├── README.md
+│   ├── LAB.md
 │   └── manifests/
 │       └── deployment-web.yaml
 │
 ├── 03-labels-selectors-service/
 │   ├── README.md
+│   ├── LAB.md
 │   └── manifests/
-│       └── service-web.yaml
+│       ├── service-web.yaml
+│       └── curl-client.yaml
 │
 └── 04-configmap-secret/
     ├── README.md
+    ├── LAB.md
     └── manifests/
         ├── configmap-web-content.yaml
         ├── deployment-web-configmap.yaml
@@ -225,104 +199,98 @@ kubernetes-learning-lab/
         └── broken-secret-pod.yaml
 ```
 
-Future lesson directories will be added when those lessons begin.
+Future lesson directories will be added only when their labs begin.
 
 ## Lesson Documentation Standard
 
-Each lesson should document:
+Every lesson should provide enough information for another learner to reproduce the experiment without relying on chat history.
 
-1. The objective
-2. The Kubernetes object or concept
-3. The problem it solves
-4. The relevant manifest
-5. The commands used
-6. The expected output
-7. What was observed
-8. A failure or troubleshooting exercise
-9. The Kubernetes components involved
-10. The key takeaways
-11. The next concept to study
+Each lesson must include:
 
-The lesson folder `README.md` is the detailed study note for that topic. This root `README.md` provides the overall roadmap and repository context.
+1. Objective and problem being solved
+2. Prerequisite/start-state check
+3. Required manifests or resources
+4. Exact commands to run
+5. Testing/verification step after each major action
+6. Expected result or expected failure
+7. Explanation of what the result proves
+8. Intentional break/failure exercise where useful
+9. Troubleshooting commands and interpretation
+10. Cleanup instructions
+11. Required end state for the next lesson
+12. Link to the next lesson
+
+The `README.md` captures theory and learning notes. The `LAB.md` is the reproducible runbook.
+
+## Common Troubleshooting Commands
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods -n myk8s -o wide
+kubectl describe pod <pod-name> -n myk8s
+kubectl get <resource> <name> -n myk8s -o yaml
+kubectl get events -n myk8s --sort-by=.lastTimestamp
+```
+
+A useful troubleshooting sequence is:
+
+```text
+What object is failing?
+        ↓
+What state is it in?
+        ↓
+kubectl describe
+        ↓
+Conditions / Events
+        ↓
+Which lifecycle stage failed?
+        ↓
+Verify the dependency at that stage
+```
 
 ## Current Progress
 
-### Completed
+### Lesson 00 — Prerequisites
 
-**Lesson 00 — Prerequisites**
-* Verify cluster access
-* Create the `myk8s` lab namespace
-* Make the lab reproducible from the repository
+- Verify tools and cluster access
+- Reproduce the three-node kind topology
+- Create and verify `myk8s`
 
-**Lesson 01 — Pod Fundamentals**
-* Pod basic structure
-* Pod lifecycle
-* Scheduler role
-* kubelet role
-* Container runtime role
-* Desired state versus observed state
-* Pod IP versus Node IP
-* `ErrImagePull`
-* `ImagePullBackOff`
-* Basic Pod troubleshooting
-* Using `kubectl get`
-* Using `kubectl describe`
-* Inspecting Pod events
+### Lesson 01 — Pod Fundamentals
 
-**Lesson 02 — Deployment and ReplicaSet**
-* Reconciliation and self-healing
-* Scaling workloads
-* Labels and selectors
-* ReplicaSet ownership
-* pod-template-hash
-* Rolling updates
-* Rollback
+- Pod structure and lifecycle
+- API Server, Scheduler, kubelet, container runtime
+- `spec` vs `status`
+- `ErrImagePull` / `ImagePullBackOff`
+- Standalone Pod deletion behavior
 
-**Lesson 03 — Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS**
-* Labels and selectors
-* ClusterIP Service
-* `port` vs `targetPort`
-* EndpointSlice
-* Service troubleshooting
-* kube-proxy and Service dataplane
-* Backend traffic distribution
-* CoreDNS and Service discovery
-* Same-namespace and cross-namespace DNS
-* Basic DNS troubleshooting
+### Lesson 02 — Deployment and ReplicaSet
 
-**Lesson 04 — ConfigMap and Secret**
-* ConfigMap as mounted files and environment variables
-* ConfigMap update behavior
-* Secret basics and Base64 encoding
-* Secret as environment variables and mounted files
-* Secret volume refresh behavior
-* `CreateContainerConfigError`
-* Missing ConfigMap and Secret troubleshooting
+- Deployment → ReplicaSet → Pod ownership
+- Reconciliation and self-healing
+- Scaling
+- Labels/selectors and pod-template-hash
+- Rolling updates and rollback
 
-### Next
+### Lesson 03 — Service and Kubernetes DNS
+
+- Labels/selectors
+- ClusterIP Service and `port` vs `targetPort`
+- EndpointSlice
+- Service failure/recovery
+- kube-proxy observation and Service dataplane
+- Backend traffic distribution
+- CoreDNS and cross-namespace discovery
+
+### Lesson 04 — ConfigMap and Secret
+
+- Mounted configuration and environment variables
+- Update behavior
+- Base64 vs encryption
+- Secret mounted files
+- `CreateContainerConfigError`
+- Missing ConfigMap/Secret recovery
+
+## Next
 
 **Lesson 05 — Storage: Volume, PersistentVolume, and PersistentVolumeClaim**
-
-## Key Learning Principle
-
-The objective of this repository is not to memorize every Kubernetes field.
-
-The priority is to understand:
-
-```text
-What is the object?
-        ↓
-Why does it exist?
-        ↓
-What problem does it solve?
-        ↓
-Which component manages it?
-        ↓
-What does its spec request?
-        ↓
-What does its status report?
-        ↓
-What happens when something fails?
-        ↓
-How can the failure be diagnosed?
-```
