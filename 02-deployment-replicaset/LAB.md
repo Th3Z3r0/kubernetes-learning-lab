@@ -141,10 +141,12 @@ There should again be three Running Pods. One Pod name should be new.
 
 ## Step 6 — Observe Deployment correcting manual ReplicaSet scaling
 
-Get the active ReplicaSet:
+Get the active ReplicaSet without assuming its hash:
 
 ```bash
-RS=$(kubectl get rs -n myk8s -l app=web -o jsonpath='{range .items[?(@.spec.replicas>0)]}{.metadata.name}{"\n"}{end}')
+RS=$(kubectl get rs -n myk8s -l app=web \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.replicas}{"\n"}{end}' \
+  | awk '$2 > 0 {print $1; exit}')
 echo "$RS"
 ```
 
@@ -174,7 +176,9 @@ Look for a scale-down event.
 Get the active ReplicaSet's template hash:
 
 ```bash
-RS=$(kubectl get rs -n myk8s -l app=web -o jsonpath='{range .items[?(@.spec.replicas>0)]}{.metadata.name}{"\n"}{end}')
+RS=$(kubectl get rs -n myk8s -l app=web \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.replicas}{"\n"}{end}' \
+  | awk '$2 > 0 {print $1; exit}')
 HASH=$(kubectl get rs "$RS" -n myk8s -o jsonpath='{.metadata.labels.pod-template-hash}')
 echo "$HASH"
 ```
