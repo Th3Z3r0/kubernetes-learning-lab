@@ -28,8 +28,8 @@ Each lesson folder contains a detailed `README.md` with the concept, lab steps, 
 | 01 | [Pod Fundamentals](01-pod-fundamentals/README.md) | Completed |
 | 02 | [Deployment and ReplicaSet](02-deployment-replicaset/README.md) | Completed |
 | 03 | [Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS](03-labels-selectors-service/README.md) | Completed |
-| 04 | ConfigMap and Secret | Next |
-| 05 | Storage: Volume, PV, and PVC | Planned |
+| 04 | [ConfigMap and Secret](04-configmap-secret/README.md) | Completed |
+| 05 | Storage: Volume, PV, and PVC | Next |
 | 06 | Ingress and External Access | Planned |
 | 07 | RBAC and Kubernetes Security | Planned |
 | 08 | NetworkPolicy | Planned |
@@ -56,6 +56,16 @@ Service
 Label Selector
     ↓
 Pods
+```
+
+Application configuration can be provided separately from the container image:
+
+```text
+ConfigMap / Secret
+        ↓
+Environment Variable or Volume
+        ↓
+Pod
 ```
 
 ## Kubernetes Control Flow
@@ -198,10 +208,21 @@ kubernetes-learning-lab/
 │   └── manifests/
 │       └── deployment-web.yaml
 │
-└── 03-labels-selectors-service/
+├── 03-labels-selectors-service/
+│   ├── README.md
+│   └── manifests/
+│       └── service-web.yaml
+│
+└── 04-configmap-secret/
     ├── README.md
     └── manifests/
-        └── service-web.yaml
+        ├── configmap-web-content.yaml
+        ├── deployment-web-configmap.yaml
+        ├── configmap-app-settings.yaml
+        ├── secret-app-example.yaml
+        ├── secret-reader.yaml
+        ├── broken-config-pod.yaml
+        └── broken-secret-pod.yaml
 ```
 
 Future lesson directories will be added when those lessons begin.
@@ -269,9 +290,18 @@ The lesson folder `README.md` is the detailed study note for that topic. This ro
 * Same-namespace and cross-namespace DNS
 * Basic DNS troubleshooting
 
+**Lesson 04 — ConfigMap and Secret**
+* ConfigMap as mounted files and environment variables
+* ConfigMap update behavior
+* Secret basics and Base64 encoding
+* Secret as environment variables and mounted files
+* Secret volume refresh behavior
+* `CreateContainerConfigError`
+* Missing ConfigMap and Secret troubleshooting
+
 ### Next
 
-**Lesson 04 — ConfigMap and Secret**
+**Lesson 05 — Storage: Volume, PersistentVolume, and PersistentVolumeClaim**
 
 ## Key Learning Principle
 
