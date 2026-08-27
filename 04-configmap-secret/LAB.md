@@ -94,6 +94,7 @@ This page is loaded from a ConfigMap.
 Create a temporary curl client:
 
 ```bash
+kubectl delete pod curl-client -n myk8s --ignore-not-found
 kubectl run curl-client \
   --image=curlimages/curl:latest \
   --restart=Never \
@@ -455,7 +456,17 @@ CreateContainerConfigError → container configuration problem
 
 ## Cleanup and restore a clean web Deployment
 
-Remove temporary lab resources:
+First replace the modified Deployment with a clean base Deployment so it no longer references Lesson 04 ConfigMaps or Secrets:
+
+```bash
+kubectl delete deployment web -n myk8s --ignore-not-found
+kubectl apply -f 02-deployment-replicaset/manifests/deployment-web.yaml
+kubectl scale deployment web --replicas=3 -n myk8s
+kubectl rollout status deployment/web -n myk8s
+kubectl apply -f 03-labels-selectors-service/manifests/service-web.yaml
+```
+
+Now remove temporary Lesson 04 resources:
 
 ```bash
 kubectl delete pod curl-client secret-reader broken-config broken-secret \
@@ -468,19 +479,18 @@ kubectl delete secret app-secret missing-secret \
   -n myk8s --ignore-not-found
 ```
 
-Restore the base Deployment and Service for future lessons:
+Verify:
 
 ```bash
-kubectl apply -f 02-deployment-replicaset/manifests/deployment-web.yaml
-kubectl scale deployment web --replicas=3 -n myk8s
-kubectl apply -f 03-labels-selectors-service/manifests/service-web.yaml
-kubectl rollout status deployment/web -n myk8s
+kubectl get deployment web -n myk8s
+kubectl get pods -n myk8s -l app=web
+kubectl get svc web-service -n myk8s
 ```
 
 ### Expected end state
 
 ```text
-Deployment/web: 3 Running Pods
+Deployment/web: 3 Running Pods using nginx:latest
 Service/web-service: present
 Lesson 04 temporary ConfigMaps/Secrets/Pods: removed
 ```
