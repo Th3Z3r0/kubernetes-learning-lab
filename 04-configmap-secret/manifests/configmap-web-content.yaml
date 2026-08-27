@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: web-content
+  namespace: myk8s
+
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Kubernetes Lesson 04</title>
+    </head>
+    <body>
+      <h1>Kubernetes Lesson 04</h1>
+      <p>This page is loaded from a ConfigMap.</p>
+    </body>
+    </html>
