@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+
+metadata:
+  name: emptydir-restart
+  namespace: myk8s
+
+spec:
+  restartPolicy: Always
+
+  containers:
+    - name: busybox
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+        - |
+          trap 'echo "PID 1 received SIGTERM"; exit 1' TERM
+          while true; do
+            sleep 3600 &
+            wait $!
+          done
+      volumeMounts:
+        - name: temporary-data
+          mountPath: /data
+
+  volumes:
+    - name: temporary-data
+      emptyDir: {}
