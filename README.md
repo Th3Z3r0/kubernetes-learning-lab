@@ -22,14 +22,14 @@ Run the lessons in order. Unless a lesson says otherwise, run commands from the 
 cd ~/kubernetes-learning-lab
 ```
 
-Each lesson now has two documents:
+Each lesson has two documents:
 
 - `README.md` — concept notes, explanations, observations, and mental models
 - `LAB.md` — reproducible step-by-step lab with commands, testing steps, expected results, troubleshooting, cleanup, and required end state
 
 For someone following the repository from scratch, **use `LAB.md` as the primary runbook** and use `README.md` for deeper explanation.
 
-> Pod names, ReplicaSet hashes, IP addresses, ages, EndpointSlice names, and some timing will differ between clusters. Expected results describe the behavior to verify rather than requiring identical dynamic values.
+> Pod names, ReplicaSet hashes, IP addresses, ages, EndpointSlice names, PV names, Node selection, and some timing will differ between clusters. Expected results describe the behavior to verify rather than requiring identical dynamic values.
 
 ## Learning Path
 
@@ -40,8 +40,8 @@ For someone following the repository from scratch, **use `LAB.md` as the primary
 | 02 | Deployment and ReplicaSet | [README](02-deployment-replicaset/README.md) | [LAB](02-deployment-replicaset/LAB.md) | Completed |
 | 03 | Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS | [README](03-labels-selectors-service/README.md) | [LAB](03-labels-selectors-service/LAB.md) | Completed |
 | 04 | ConfigMap and Secret | [README](04-configmap-secret/README.md) | [LAB](04-configmap-secret/LAB.md) | Completed |
-| 05 | Storage: Volume, PV, and PVC | — | — | Next |
-| 06 | Ingress and External Access | — | — | Planned |
+| 05 | Storage: Volume, PV, PVC, and StorageClass | [README](05-storage/README.md) | [LAB](05-storage/LAB.md) | Completed |
+| 06 | Ingress and External Access | — | — | Next |
 | 07 | RBAC and Kubernetes Security | — | — | Planned |
 | 08 | NetworkPolicy | — | — | Planned |
 
@@ -65,7 +65,7 @@ kind-worker2
 
 Lesson 00 includes a reproducible `kind-config.yaml` for creating the same three-node topology.
 
-Other Kubernetes clusters can also be used, but implementation-specific observations such as node names, kube-proxy behavior, networking addresses, and storage classes may differ.
+Other Kubernetes clusters can also be used, but implementation-specific observations such as node names, kube-proxy behavior, networking addresses, storage classes, provisioners, and PV backing types may differ.
 
 ## Core Kubernetes Relationships
 
@@ -101,6 +101,28 @@ ConfigMap / Secret
 Environment Variable or Volume
         ↓
 Pod
+```
+
+### Persistent storage
+
+```text
+Pod
+ ↓
+PVC
+ ↓
+StorageClass / Provisioner
+ ↓
+PV
+ ↓
+Storage backend
+```
+
+Simple storage memory aid:
+
+```text
+PVC          = WHAT storage is requested
+StorageClass = HOW dynamic storage is provided
+PV           = allocated storage resource
 ```
 
 ## Kubernetes Control Flow
@@ -186,17 +208,29 @@ kubernetes-learning-lab/
 │       ├── service-web.yaml
 │       └── curl-client.yaml
 │
-└── 04-configmap-secret/
+├── 04-configmap-secret/
+│   ├── README.md
+│   ├── LAB.md
+│   └── manifests/
+│       ├── configmap-web-content.yaml
+│       ├── deployment-web-configmap.yaml
+│       ├── configmap-app-settings.yaml
+│       ├── secret-app-example.yaml
+│       ├── secret-reader.yaml
+│       ├── broken-config-pod.yaml
+│       └── broken-secret-pod.yaml
+│
+└── 05-storage/
     ├── README.md
     ├── LAB.md
     └── manifests/
-        ├── configmap-web-content.yaml
-        ├── deployment-web-configmap.yaml
-        ├── configmap-app-settings.yaml
-        ├── secret-app-example.yaml
-        ├── secret-reader.yaml
-        ├── broken-config-pod.yaml
-        └── broken-secret-pod.yaml
+        ├── emptydir-pod.yaml
+        ├── pvc-demo.yaml
+        ├── pvc-pod.yaml
+        ├── broken-pvc.yaml
+        ├── fixed-pvc.yaml
+        ├── broken-storage-pod.yaml
+        └── emptydir-restart.yaml
 ```
 
 Future lesson directories will be added only when their labs begin.
@@ -230,6 +264,16 @@ kubectl get pods -n myk8s -o wide
 kubectl describe pod <pod-name> -n myk8s
 kubectl get <resource> <name> -n myk8s -o yaml
 kubectl get events -n myk8s --sort-by=.lastTimestamp
+```
+
+For storage troubleshooting, also use:
+
+```bash
+kubectl get storageclass
+kubectl get pvc -A
+kubectl get pv
+kubectl describe pvc <pvc-name> -n myk8s
+kubectl describe pv <pv-name>
 ```
 
 A useful troubleshooting sequence is:
@@ -291,6 +335,21 @@ Verify the dependency at that stage
 - `CreateContainerConfigError`
 - Missing ConfigMap/Secret recovery
 
+### Lesson 05 — Storage
+
+- Container filesystem vs Pod-lifetime `emptyDir`
+- Prove `emptyDir` is deleted with the Pod
+- Prove `emptyDir` survives a container restart inside the same Pod
+- PVC → StorageClass → Provisioner → PV relationship
+- Dynamic provisioning with `WaitForFirstConsumer`
+- PVC/PV binding and `ReadWriteOnce`
+- Persistent data surviving Pod recreation
+- PVC deletion with `ReclaimPolicy=Delete`
+- Local-path/HostPath behavior in the reference kind lab
+- ConfigMap vs persistent application data
+- Broken StorageClass troubleshooting
+- `Pending` as expected waiting state vs actual provisioning failure
+
 ## Next
 
-**Lesson 05 — Storage: Volume, PersistentVolume, and PersistentVolumeClaim**
+**Lesson 06 — Ingress and External Access**
