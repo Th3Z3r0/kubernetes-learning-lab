@@ -1,0 +1,13 @@
+storageClass:
+  create: true
+  provisionerName: rancher.io/local-path
+  defaultClass: true
+  defaultVolumeType: hostPath
+  name: standard
+  reclaimPolicy: Delete
+  volumeBindingMode: WaitForFirstConsumer
+
+nodePathMap:
+  - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+    paths:
+      - /var/local-path-provisioner
