@@ -4,7 +4,7 @@ Run commands from the repository root.
 
 ## Goal
 
-Expose the `web` Deployment with a ClusterIP Service, inspect EndpointSlice backends, test Service traffic and DNS, intentionally break the selector, observe failure, restore it, and test cross-namespace discovery.
+Expose the `web` Deployment with a ClusterIP Service, inspect EndpointSlice backends, test Service traffic and DNS, intentionally break the selector, observe failure, restore it, inspect the Cilium Service dataplane, and test cross-namespace discovery.
 
 ## Prerequisite and starting state
 
@@ -58,7 +58,7 @@ kubectl get svc web-service -n myk8s -o wide
 
 The Service should be `ClusterIP`, expose port `80/TCP`, and use selector `app=web`.
 
-The ClusterIP is assigned by Kubernetes and may differ from the value captured in the theory notes.
+The ClusterIP is assigned by Kubernetes and may differ between runs.
 
 Save it for later tests:
 
@@ -191,17 +191,65 @@ kubectl exec -n myk8s curl-client -- curl -sS http://web-service | head
 
 Backend IPs should return and nginx should be reachable again.
 
-## Step 9 — Observe kube-proxy
+## Step 9 — Observe the Cilium Service dataplane
+
+The reference cluster intentionally has no kube-proxy. Verify that first:
 
 ```bash
-kubectl get pods -n kube-system -l k8s-app=kube-proxy -o wide
+kubectl get ds kube-proxy -n kube-system
 ```
 
 ### Expected result
 
-In the reference kind cluster, one kube-proxy Pod should run on each node.
+```text
+Error from server (NotFound)
+```
 
-This is an observation of the Service dataplane implementation used by this cluster; other Kubernetes environments may implement Service networking differently.
+Confirm Cilium is using kube-proxy replacement:
+
+```bash
+kubectl exec -n kube-system ds/cilium \
+  -c cilium-agent -- \
+  cilium-dbg status | grep KubeProxyReplacement
+```
+
+Expected:
+
+```text
+KubeProxyReplacement: True
+```
+
+Now inspect the Service in Cilium's dataplane:
+
+```bash
+kubectl exec -n kube-system ds/cilium \
+  -c cilium-agent -- \
+  cilium-dbg service list | grep "$SVC_IP"
+```
+
+### Expected result
+
+The output should show the Service ClusterIP and one or more active Pod backends, conceptually:
+
+```text
+<SVC_IP>:80/TCP   ClusterIP
+  1 => <pod-ip-a>:80/TCP (active)
+  2 => <pod-ip-b>:80/TCP (active)
+  3 => <pod-ip-c>:80/TCP (active)
+```
+
+This separates the objects from the implementation:
+
+```text
+CONTROL PLANE
+Service + EndpointSlice
+        ↓
+
+DATA PLANE
+Cilium eBPF Service state
+        ↓
+Backend Pod
+```
 
 ## Step 10 — Prove requests can reach different backend Pods
 
@@ -310,6 +358,8 @@ Keep `web` Deployment and `web-service`; Lesson 04 uses them.
 Deployment/web: 3 Running Pods
 Service/web-service: ClusterIP, selector app=web
 EndpointSlice: current Pod backends
+Cilium KubeProxyReplacement: True
+kube-proxy: absent
 ```
 
 You should be able to troubleshoot in this order:
@@ -322,6 +372,8 @@ Selector
 Pod labels
   ↓
 EndpointSlice
+  ↓
+Cilium Service dataplane
   ↓
 Pod readiness/application
 ```
