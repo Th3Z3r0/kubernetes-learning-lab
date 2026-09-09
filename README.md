@@ -29,7 +29,7 @@ Each lesson has two documents:
 
 For someone following the repository from scratch, **use `LAB.md` as the primary runbook** and use `README.md` for deeper explanation.
 
-> Pod names, ReplicaSet hashes, IP addresses, ages, EndpointSlice names, PV names, Node selection, and some timing will differ between clusters. Expected results describe the behavior to verify rather than requiring identical dynamic values.
+> Pod names, ReplicaSet hashes, IP addresses, ages, EndpointSlice names, PV names, Node selection, and some timing will differ between clusters. Expected results describe behavior to verify rather than requiring identical dynamic values.
 
 ## Learning Path
 
@@ -47,13 +47,31 @@ For someone following the repository from scratch, **use `LAB.md` as the primary
 
 ## Reference Lab Environment
 
-The reference environment uses:
+The current reference environment uses:
 
-- Kubernetes distribution: kind
-- Control plane: 1 node
-- Worker nodes: 2 nodes
-- Container runtime: containerd
-- Lab namespace: `myk8s`
+```text
+kind
+├── 1 control-plane
+├── 2 workers
+├── containerd
+├── Pod CIDR:     10.10.0.0/16
+├── Service CIDR: 10.11.0.0/16
+│
+├── default kind CNI disabled
+├── kube-proxy disabled
+│
+├── Cilium 1.20.1
+│   ├── CNI
+│   ├── kube-proxy replacement
+│   ├── eBPF Service / NodePort dataplane
+│   ├── Envoy
+│   └── Cilium Ingress Controller
+│
+├── Rancher Local Path Provisioner 0.0.37
+│   └── default StorageClass: standard
+│
+└── lab namespace: myk8s
+```
 
 Reference node layout:
 
@@ -63,9 +81,17 @@ kind-worker
 kind-worker2
 ```
 
-Lesson 00 includes a reproducible `kind-config.yaml` for creating the same three-node topology.
+Lesson 00 contains the complete reproducible cluster setup including:
 
-Other Kubernetes clusters can also be used, but implementation-specific observations such as node names, kube-proxy behavior, networking addresses, storage classes, provisioners, and PV backing types may differ.
+```text
+00-prerequisites/kind-config.yaml
+00-prerequisites/cilium-values.yaml
+00-prerequisites/local-path-values.yaml
+```
+
+The kind configuration deliberately disables the default CNI and kube-proxy. Nodes are expected to be temporarily `NotReady` until Cilium is installed.
+
+Other Kubernetes clusters can also be used, but implementation-specific observations such as Node names, CNI behavior, Service dataplane, networking addresses, storage classes, provisioners, and PV backing types can differ.
 
 ## Core Kubernetes Relationships
 
@@ -91,6 +117,16 @@ Selector
 EndpointSlice
     ↓
 Pods
+```
+
+In the reference lab, Cilium implements the Service dataplane:
+
+```text
+Service / EndpointSlice
+        ↓
+Cilium eBPF service state
+        ↓
+Backend Pod
 ```
 
 ### Application configuration
@@ -151,6 +187,8 @@ Container
 | Controllers | Reconcile desired and observed state |
 | kubelet | Ensures assigned Pods are running on its Node |
 | Container Runtime | Pulls images and manages containers |
+| Cilium | Provides the reference lab CNI and Service/NodePort dataplane |
+| Envoy | Provides L7 proxying used by the Cilium Ingress dataplane |
 
 ## Important Mental Model
 
@@ -185,6 +223,8 @@ kubernetes-learning-lab/
 │   ├── README.md
 │   ├── LAB.md
 │   ├── kind-config.yaml
+│   ├── cilium-values.yaml
+│   ├── local-path-values.yaml
 │   └── manifests/
 │       └── namespace-myk8s.yaml
 │
@@ -266,7 +306,15 @@ kubectl get <resource> <name> -n myk8s -o yaml
 kubectl get events -n myk8s --sort-by=.lastTimestamp
 ```
 
-For storage troubleshooting, also use:
+For Cilium/networking troubleshooting:
+
+```bash
+kubectl get pods -n kube-system -o wide
+kubectl exec -n kube-system ds/cilium -c cilium-agent -- cilium-dbg status
+kubectl exec -n kube-system ds/cilium -c cilium-agent -- cilium-dbg service list
+```
+
+For storage troubleshooting:
 
 ```bash
 kubectl get storageclass
@@ -296,9 +344,14 @@ Verify the dependency at that stage
 
 ### Lesson 00 — Prerequisites
 
-- Verify tools and cluster access
-- Reproduce the three-node kind topology
-- Create and verify `myk8s`
+- Reproducible three-node kind topology
+- Default CNI disabled
+- kube-proxy disabled
+- Cilium CNI and kube-proxy replacement
+- Cilium Envoy and IngressClass
+- Rancher local-path dynamic storage
+- `standard` default StorageClass
+- `myk8s` namespace
 
 ### Lesson 01 — Pod Fundamentals
 
@@ -322,7 +375,7 @@ Verify the dependency at that stage
 - ClusterIP Service and `port` vs `targetPort`
 - EndpointSlice
 - Service failure/recovery
-- kube-proxy observation and Service dataplane
+- Service dataplane observation
 - Backend traffic distribution
 - CoreDNS and cross-namespace discovery
 
