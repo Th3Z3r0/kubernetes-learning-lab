@@ -1,0 +1,11 @@
+ipam:
+  mode: kubernetes
+
+kubeProxyReplacement: true
+
+envoy:
+  enabled: true
+
+ingressController:
+  enabled: true
+  loadbalancerMode: dedicated
