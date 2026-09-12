@@ -19,7 +19,7 @@ git clone https://github.com/Th3Z3r0/kubernetes-learning-lab.git
 cd ~/kubernetes-learning-lab
 ```
 
-Do not run `chmod +x` on the tracked repository scripts. Invoke them explicitly with `bash` so their Git file mode remains unchanged.
+Do not change the executable bit on the tracked repository scripts. Invoke them explicitly with `bash` so their Git file mode remains unchanged.
 
 Verify the clone before continuing:
 
