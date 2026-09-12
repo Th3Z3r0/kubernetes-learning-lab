@@ -7,13 +7,13 @@ install Git + curl
         ↓
 clone this repository
         ↓
-00-prerequisites/scripts/bootstrap-lab.sh
+bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
 A separate validator checks each stage independently:
 
 ```text
-00-prerequisites/scripts/validate-lab.sh
+bash 00-prerequisites/scripts/validate-lab.sh
 ```
 
 ## Fresh Ubuntu Quick Start
@@ -42,12 +42,13 @@ git status
 ls 00-prerequisites/scripts/
 ```
 
-Make the scripts executable and run the automated bootstrap:
+Run the automated bootstrap explicitly with Bash:
 
 ```bash
-chmod +x 00-prerequisites/scripts/*.sh
-./00-prerequisites/scripts/bootstrap-lab.sh
+bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
+
+Do **not** run `chmod +x` on the tracked repository scripts. They are intentionally invoked with `bash`. Changing a tracked script from mode `100644` to `100755` can make the working tree dirty and can block operations such as `git pull --rebase`.
 
 From this point onward, the bootstrap installs/configures the required host and Kubernetes components and validates each stage.
 
@@ -60,7 +61,9 @@ sudo apt-get install git curl
     ↓
 git clone
     ↓
-bootstrap-lab.sh
+bash bootstrap-lab.sh
+    ↓
+capacity + compatibility preflight
     ↓
 Docker + kubectl + kind + Helm
     ↓
@@ -78,6 +81,8 @@ Official stable release
         +
 checksum / package validation
         +
+capacity preflight
+        +
 compatibility preflight
         +
 runtime validation
@@ -87,16 +92,81 @@ use or install the component
 
 "Best version" does not mean blindly installing the newest artifact. The bootstrap discovers stable upstream releases, checks compatibility, validates the resulting behavior, and stops when a future change no longer matches the lab architecture.
 
+## Host Capacity Preflight
+
+Before building the full lab, the bootstrap checks free root-disk capacity and free inodes.
+
+Default policy:
+
+```text
+free disk < 20 GiB
+→ fail before kind/Cilium installation
+
+free disk 20–29 GiB
+→ warn
+
+free disk >= 30 GiB
+→ pass comfortably
+
+free inodes < 100000
+→ fail
+```
+
+The thresholds can be overridden with:
+
+```text
+MIN_FREE_GIB
+WARN_FREE_GIB
+MIN_FREE_INODES
+```
+
+The defaults are lab safety policy, not general Kubernetes platform requirements.
+
 ## Version Resolution Strategy
 
 | Component | Default source | Safety behavior |
 |---|---|---|
 | Docker Engine | Docker official Ubuntu `stable` APT repository | installs/updates the stable package and validates the daemon with `hello-world` |
 | kubectl | Kubernetes `stable.txt` | verifies SHA-256 and checks client/server minor-version skew after kind is created |
-| kind | latest stable GitHub release | verifies the downloaded binary SHA-256 |
+| kind | latest stable GitHub release | verifies the downloaded binary SHA-256 and inspects the node images published for that release |
+| Kubernetes node image | digest-pinned `kindest/node` image from the selected kind release | chooses the highest Kubernetes minor that is listed as e2e-tested by the selected Cilium release |
 | Helm | latest stable GitHub release | downloads from `get.helm.sh` and verifies SHA-256 |
-| Cilium | latest stable Cilium GitHub release | preflights the official OCI chart against the cluster Kubernetes version, then performs Cilium and Ingress validation |
+| Cilium | latest stable Cilium GitHub release | reads that release's official Kubernetes compatibility matrix, preflights the OCI chart, then performs Cilium and Ingress validation |
 | Local Path Provisioner | existing compatible kind-provided provisioner first; latest Rancher chart only as fallback | validates StorageClass behavior and a real PVC/PV before accepting the storage layer |
+
+## Kubernetes / Cilium Compatibility Guard
+
+The bootstrap does not simply combine the newest kind default Kubernetes image with the newest stable Cilium release.
+
+It resolves versions in this order:
+
+```text
+stable Cilium release
+        ↓
+read its official Kubernetes compatibility matrix
+        ↓
+latest stable kind release
+        ↓
+read digest-pinned node images published for that kind release
+        ↓
+find the intersection
+        ↓
+select highest compatible Kubernetes patch version
+        ↓
+create kind explicitly with that image
+```
+
+For example, if Cilium lists Kubernetes minors `1.33 1.34 1.35 1.36`, while a kind release publishes node images for `1.37`, `1.36`, `1.35`, and `1.34`, the bootstrap chooses the highest compatible `1.36.x` digest-pinned image rather than the kind default `1.37.x` image.
+
+After the cluster is created, the actual Kubernetes server minor is checked again against Cilium's e2e-tested list before Cilium installation.
+
+An explicit digest-pinned node image can be supplied with:
+
+```text
+KIND_NODE_IMAGE
+```
+
+An untested Kubernetes minor is rejected by default. `ALLOW_UNTESTED_K8S=true` exists only for intentional experiments where the user explicitly accepts that risk.
 
 ## Important Storage Strategy
 
@@ -162,9 +232,27 @@ Lab-specific Cilium values are kept in:
 
 Before installing a newly discovered Cilium release, the bootstrap verifies that expected values such as `kubeProxyReplacement`, `envoy`, and `ingressController` still exist and renders the Helm chart against the actual Kubernetes server version.
 
+This Helm-rendering preflight checks the chart/value interface. It is separate from the official Kubernetes/Cilium compatibility check described above.
+
 If a future release changes those assumptions, the bootstrap fails before installation instead of silently producing a different architecture.
 
-The Local Path Helm chart receives the same preflight when it is needed as a fallback.
+The Local Path Helm chart receives the same values/rendering preflight when it is needed as a fallback.
+
+## Visible Wait / Convergence Progress
+
+Kubernetes and Cilium operations are asynchronous. A Pod or Service object can exist before the full dataplane has converged.
+
+Long-running waits therefore show visible progress, for example:
+
+```text
+[WAIT] Cilium Helm install/upgrade | (18s)
+[WAIT] Cilium Helm install/upgrade / (19s)
+[WAIT] Cilium cluster health convergence - (45s/180s)
+```
+
+The validator retries Cilium health convergence instead of checking it only once. It also retries the real Ingress HTTP request after the dedicated NodePort Service appears so Envoy/eBPF programming has time to converge.
+
+If Cilium installation fails, the bootstrap prints recent `kube-system` events to make problems such as image extraction or `no space left on device` visible immediately.
 
 ## Normal Usage
 
@@ -172,12 +260,7 @@ From an already cloned repository:
 
 ```bash
 cd ~/kubernetes-learning-lab
-
-chmod +x \
-  00-prerequisites/scripts/bootstrap-lab.sh \
-  00-prerequisites/scripts/validate-lab.sh
-
-./00-prerequisites/scripts/bootstrap-lab.sh
+bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
 The sequence is:
@@ -185,11 +268,15 @@ The sequence is:
 ```text
 Ubuntu validation
       ↓
+host capacity preflight
+      ↓
 base packages
       ↓
 repository available
       ↓
 resolve stable versions
+      ↓
+select compatible digest-pinned Kubernetes node image
       ↓
 Docker Engine
       ↓
@@ -243,7 +330,7 @@ A new Docker installation adds the current user to the `docker` group. The boots
 ### Host tools
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh --stage tools
+bash 00-prerequisites/scripts/validate-lab.sh --stage tools
 ```
 
 Checks binaries, Docker daemon access, and `hello-world`.
@@ -251,7 +338,7 @@ Checks binaries, Docker daemon access, and `hello-world`.
 ### kind bootstrap
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh --stage kind-bootstrap
+bash 00-prerequisites/scripts/validate-lab.sh --stage kind-bootstrap
 ```
 
 Checks the 3-node cluster, API reachability, kube-proxy absence, and kubectl/server version skew. Nodes are allowed to be `NotReady` before Cilium is installed.
@@ -259,7 +346,7 @@ Checks the 3-node cluster, API reachability, kube-proxy absence, and kubectl/ser
 ### Cilium
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh --stage cilium
+bash 00-prerequisites/scripts/validate-lab.sh --stage cilium
 ```
 
 Checks:
@@ -280,7 +367,7 @@ IngressClass=cilium
 Run the active networking test too:
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh \
+bash 00-prerequisites/scripts/validate-lab.sh \
   --stage cilium \
   --smoke
 ```
@@ -290,7 +377,7 @@ The smoke test proves both ClusterIP/DNS and Cilium Ingress through a NodePort f
 ### Storage
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh --stage storage
+bash 00-prerequisites/scripts/validate-lab.sh --stage storage
 ```
 
 Static validation checks the required StorageClass properties, identifies the implementation source, and verifies that the local-path Deployment is Ready.
@@ -298,7 +385,7 @@ Static validation checks the required StorageClass properties, identifies the im
 Run the provisioning test:
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh \
+bash 00-prerequisites/scripts/validate-lab.sh \
   --stage storage \
   --smoke
 ```
@@ -326,7 +413,7 @@ PV deleted by ReclaimPolicy=Delete
 ### Complete validation
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh \
+bash 00-prerequisites/scripts/validate-lab.sh \
   --stage all \
   --smoke
 ```
@@ -338,20 +425,20 @@ A healthy reference environment should finish with zero failures.
 Normal execution reuses an existing kind cluster and validates it instead of deleting it:
 
 ```bash
-./00-prerequisites/scripts/bootstrap-lab.sh
+bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
 Recreate the cluster intentionally:
 
 ```bash
-./00-prerequisites/scripts/bootstrap-lab.sh \
+bash 00-prerequisites/scripts/bootstrap-lab.sh \
   --recreate-cluster
 ```
 
 Upgrade Helm-managed components intentionally:
 
 ```bash
-./00-prerequisites/scripts/bootstrap-lab.sh \
+bash 00-prerequisites/scripts/bootstrap-lab.sh \
   --upgrade-components
 ```
 
@@ -360,14 +447,14 @@ A compatible kind-provided/non-Helm storage provisioner is not replaced by this 
 Prepare only host tools:
 
 ```bash
-./00-prerequisites/scripts/bootstrap-lab.sh \
+bash 00-prerequisites/scripts/bootstrap-lab.sh \
   --tools-only
 ```
 
 Skip active smoke tests:
 
 ```bash
-./00-prerequisites/scripts/bootstrap-lab.sh \
+bash 00-prerequisites/scripts/bootstrap-lab.sh \
   --no-smoke
 ```
 
@@ -376,16 +463,24 @@ Skip active smoke tests:
 Automatic stable-version discovery is the default, but versions can be pinned for troubleshooting or exact reproduction:
 
 ```bash
-KUBECTL_VERSION=v1.36.3 \
+KUBECTL_VERSION=v1.37.0 \
 KIND_VERSION=v0.33.0 \
 HELM_VERSION=v4.3.0 \
 CILIUM_VERSION=v1.20.1 \
 LOCAL_PATH_VERSION=v0.0.37 \
-./00-prerequisites/scripts/bootstrap-lab.sh \
+bash 00-prerequisites/scripts/bootstrap-lab.sh \
   --recreate-cluster
 ```
 
 `LOCAL_PATH_VERSION` is used only when the Helm fallback is needed, or when an existing Helm-managed Local Path installation is explicitly upgraded.
+
+For exact Kubernetes image reproduction, use a digest-pinned node image, for example:
+
+```bash
+KIND_NODE_IMAGE='kindest/node:v1.36.4@sha256:<digest>' \
+bash 00-prerequisites/scripts/bootstrap-lab.sh \
+  --recreate-cluster
+```
 
 ## State and Log Record
 
@@ -410,7 +505,9 @@ ARCH=amd64
 DOCKER_VERSION=...
 KUBECTL_VERSION=...
 KIND_VERSION=...
+KIND_NODE_IMAGE=kindest/node:v...@sha256:...
 KUBERNETES_SERVER_VERSION=...
+CILIUM_K8S_SUPPORTED=...
 HELM_VERSION=...
 CILIUM_VERSION=...
 STORAGE_SOURCE=kind-builtin
@@ -439,9 +536,12 @@ The bootstrap intentionally stops rather than making risky assumptions when it e
 
 - non-Ubuntu operating system
 - unsupported CPU architecture
+- insufficient free disk or inode capacity
 - conflicting pre-existing Docker/container-runtime packages
 - failed binary checksum validation
 - invalid kubectl/server version skew
+- no compatible kind Kubernetes node image for the selected Cilium release
+- Kubernetes server minor outside the selected Cilium release's e2e-tested matrix (unless explicitly overridden)
 - kube-proxy unexpectedly present
 - Cilium chart values no longer matching the lab architecture
 - a partial/incompatible existing `standard` StorageClass or local-path Deployment
