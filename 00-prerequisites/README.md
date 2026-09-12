@@ -6,6 +6,67 @@ Prepare a reproducible Kubernetes lab environment before starting Lesson 01, inc
 
 The reference environment is intentionally built so networking, Service dataplane, Ingress, and storage behavior are explicit and testable.
 
+## Minimum System Requirements
+
+This is a **three-node kind lab running Docker, Kubernetes, Cilium, Envoy, Ingress, and dynamic local storage on one Ubuntu host**. The values below are therefore lab sizing guidance, not generic production Kubernetes sizing.
+
+| Resource | Minimum for this lab | Recommended | Notes |
+|---|---:|---:|---|
+| CPU | **4 vCPU** | **6-8 vCPU** | Kubernetes documents at least 2 CPUs for a control-plane machine, but this lab runs 1 control-plane + 2 workers + Cilium/Envoy on one host. |
+| Memory | **8 GiB RAM** | **12-16 GiB RAM** | kind notes that basic clusters need significant Docker memory and that multi-node clusters/additional components require more. |
+| Root disk free space | **20 GiB free** | **30+ GiB free** | The bootstrap fails below 20 GiB free and warns below 30 GiB. A 40-50 GiB root disk is a comfortable starting size for a fresh host. |
+| Free inodes | **100,000** | **500,000+** | Image extraction and container layers consume many filesystem entries. The bootstrap fails below 100,000 free inodes. |
+| Linux kernel | **5.10+** | Current Ubuntu LTS kernel | Cilium 1.20 requires Linux kernel 5.10 or newer (or a documented equivalent). |
+| CPU architecture | **amd64 or arm64** | amd64 | The bootstrap and Cilium support both AMD64 and AArch64/ARM64. |
+| Operating system | **Ubuntu** | Current Ubuntu LTS | The bootstrap currently supports Ubuntu only. Cilium supports Ubuntu 20.04 and newer. |
+| Network | Outbound DNS + HTTPS | Unrestricted outbound Internet access | Required for Ubuntu APT, GitHub, Kubernetes downloads, Docker registries, Quay, and GHCR. |
+| Privileges | Normal user with `sudo` | Same | Do not run the bootstrap as root. The script configures Docker access for the normal user. |
+
+The resource values above intentionally include headroom for active smoke tests and later lessons. If CPU or RAM is too small, the cluster may technically start but Pods can become slow, unstable, or fail to schedule during image pulls and concurrent validation.
+
+Useful pre-check commands on a fresh host:
+
+```bash
+# CPU
+nproc
+
+# Memory
+free -h
+
+# Root filesystem capacity and free space
+df -h /
+
+# Free inodes
+df -i /
+
+# Kernel
+uname -r
+
+# Architecture
+dpkg --print-architecture
+
+# Ubuntu release
+cat /etc/os-release
+```
+
+A practical minimum target should look roughly like:
+
+```text
+CPU:              4 or more
+RAM:              8 GiB or more
+Free root disk:   20 GiB or more
+Free inodes:      100000 or more
+Kernel:           5.10 or newer
+Architecture:     amd64 or arm64
+OS:               Ubuntu
+```
+
+Official background references:
+
+- [Cilium System Requirements](https://docs.cilium.io/en/stable/operations/system_requirements/)
+- [kind Quick Start](https://kind.sigs.k8s.io/docs/user/quick-start/)
+- [Kubernetes kubeadm cluster requirements](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/)
+
 ## Fresh Ubuntu: First Manual Step
 
 A completely fresh Ubuntu host does not yet have this repository, so the only manual preparation required before using the automation is to install Git and clone the repository.
