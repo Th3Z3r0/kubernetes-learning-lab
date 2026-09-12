@@ -6,9 +6,58 @@ Prepare a reproducible Kubernetes lab environment before starting Lesson 01, inc
 
 The reference environment is intentionally built so networking, Service dataplane, Ingress, and storage behavior are explicit and testable.
 
+## Fresh Ubuntu: First Manual Step
+
+A completely fresh Ubuntu host does not yet have this repository, so the only manual preparation required before using the automation is to install Git and clone the repository.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl
+
+cd ~
+git clone https://github.com/Th3Z3r0/kubernetes-learning-lab.git
+cd ~/kubernetes-learning-lab
+
+chmod +x 00-prerequisites/scripts/*.sh
+```
+
+Verify the clone before continuing:
+
+```bash
+git status
+ls 00-prerequisites/scripts/
+```
+
+Expected scripts:
+
+```text
+bootstrap-lab.sh
+validate-lab.sh
+```
+
+After that, the bootstrap handles the remaining host and cluster preparation:
+
+```bash
+./00-prerequisites/scripts/bootstrap-lab.sh
+```
+
+Mental model:
+
+```text
+Fresh Ubuntu
+    ↓
+install Git + curl
+    ↓
+git clone repository
+    ↓
+bootstrap-lab.sh
+    ↓
+all remaining preparation + validation
+```
+
 ## Recommended Setup Method
 
-For a fresh Ubuntu host, use the automated bootstrap:
+For a fresh Ubuntu host, use the automated bootstrap after cloning the repository:
 
 ```bash
 ./00-prerequisites/scripts/bootstrap-lab.sh
@@ -28,6 +77,8 @@ A standalone validator is also available:
 
 ```text
 Fresh Ubuntu
+    ↓
+Git clone
     ↓
 Base packages
     ↓
@@ -361,6 +412,8 @@ Choose either path:
 
 ```text
 Automated fresh-host setup
+→ install Git + curl
+→ clone repository
 → AUTOMATION.md
 → bootstrap-lab.sh
 
