@@ -15,7 +15,7 @@ Stages:
   tools           Validate host tools and Docker
   kind-bootstrap  Validate the kind cluster bootstrap state
   cilium          Validate Cilium, kube-proxy replacement, and Ingress
-  storage         Validate Local Path Provisioner and StorageClass
+  storage         Validate compatible dynamic local storage
   namespace       Validate the myk8s namespace
   all             Validate the complete final environment (default)
 
@@ -95,6 +95,19 @@ validate_tools() {
   command -v helm >/dev/null 2>&1 && info "$(helm version --short 2>/dev/null || helm version 2>/dev/null | head -n 1)"
 }
 
+version_minor_distance() {
+  local a="$1" b="$2"
+  local amajor aminor bmajor bminor diff
+  amajor=$(sed -E 's/^v?([0-9]+)\..*/\1/' <<<"$a")
+  aminor=$(sed -E 's/^v?[0-9]+\.([0-9]+).*/\1/' <<<"$a")
+  bmajor=$(sed -E 's/^v?([0-9]+)\..*/\1/' <<<"$b")
+  bminor=$(sed -E 's/^v?[0-9]+\.([0-9]+).*/\1/' <<<"$b")
+  [[ "$amajor" == "$bmajor" ]] || { echo 999; return; }
+  diff=$((aminor - bminor))
+  (( diff < 0 )) && diff=$((-diff))
+  echo "$diff"
+}
+
 validate_kind_bootstrap() {
   info "Validating kind cluster bootstrap"
 
@@ -136,24 +149,15 @@ validate_kind_bootstrap() {
   ready=$(kubectl get nodes -o json 2>/dev/null | jq '[.items[] | select(.status.conditions[]? | select(.type=="Ready" and .status=="True"))] | length' 2>/dev/null || echo 0)
   info "Node readiness: ${ready}/${total} Ready"
 
-  local client server cmajor cminor smajor sminor diff
+  local client server diff
   client=$(kubectl version -o json 2>/dev/null | jq -r '.clientVersion.gitVersion // empty')
   server=$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // empty')
   if [[ -n "$client" && -n "$server" ]]; then
-    cmajor=$(sed -E 's/^v?([0-9]+)\..*/\1/' <<<"$client")
-    cminor=$(sed -E 's/^v?[0-9]+\.([0-9]+).*/\1/' <<<"$client")
-    smajor=$(sed -E 's/^v?([0-9]+)\..*/\1/' <<<"$server")
-    sminor=$(sed -E 's/^v?[0-9]+\.([0-9]+).*/\1/' <<<"$server")
-    if [[ "$cmajor" == "$smajor" ]]; then
-      diff=$((cminor - sminor))
-      (( diff < 0 )) && diff=$((-diff))
-      if (( diff <= 1 )); then
-        pass "kubectl $client is within one minor of server $server"
-      else
-        fail "kubectl $client is more than one minor from server $server"
-      fi
+    diff=$(version_minor_distance "$client" "$server")
+    if (( diff <= 1 )); then
+      pass "kubectl $client is within one minor of server $server"
     else
-      fail "kubectl major version $client does not match server major version $server"
+      fail "kubectl $client is outside the supported +/-1 minor skew from server $server"
     fi
   else
     fail "could not determine kubectl client/server versions"
@@ -184,7 +188,7 @@ validate_cilium_static() {
     pass "kube-proxy remains absent"
   fi
 
-  local desired ready_ds
+  local ds desired ready_ds
   for ds in cilium cilium-envoy; do
     desired=$(kubectl get ds "$ds" -n kube-system -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo 0)
     ready_ds=$(kubectl get ds "$ds" -n kube-system -o jsonpath='{.status.numberReady}' 2>/dev/null || echo 0)
@@ -352,29 +356,36 @@ YAML
   cleanup_network
 }
 
+detect_storage_source() {
+  STORAGE_SOURCE="unknown"
+  STORAGE_IMAGE=""
+
+  if helm status local-path-provisioner -n local-path-storage >/dev/null 2>&1; then
+    STORAGE_SOURCE="helm"
+  fi
+
+  if kubectl get deployment local-path-provisioner -n local-path-storage >/dev/null 2>&1; then
+    STORAGE_IMAGE=$(kubectl get deployment local-path-provisioner -n local-path-storage \
+      -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+
+    if [[ "$STORAGE_SOURCE" != "helm" ]]; then
+      if [[ "$STORAGE_IMAGE" == *"kindest/local-path-provisioner:"* ]]; then
+        STORAGE_SOURCE="kind-builtin"
+      else
+        STORAGE_SOURCE="existing-non-helm"
+      fi
+    fi
+  fi
+}
+
 validate_storage_static() {
-  info "Validating Local Path Provisioner"
+  info "Validating compatible dynamic local storage"
 
-  if ! helm status local-path-provisioner -n local-path-storage >/dev/null 2>&1; then
-    fail "Local Path Provisioner Helm release is not deployed"
-    return 1
-  fi
-  pass "Local Path Provisioner Helm release is deployed"
-
-  local dep
-  dep=$(kubectl get deployment -n local-path-storage -o json 2>/dev/null | jq -r '.items[] | select(.metadata.labels["app.kubernetes.io/name"]=="local-path-provisioner" or (.metadata.name | contains("local-path"))) | .metadata.name' | head -n 1)
-  if [[ -n "$dep" ]] && kubectl rollout status deployment/"$dep" -n local-path-storage --timeout=5s >/dev/null 2>&1; then
-    pass "Local Path Provisioner Deployment is Ready"
-  else
-    fail "Local Path Provisioner Deployment is not Ready"
-  fi
-
-  if kubectl get storageclass standard >/dev/null 2>&1; then
-    pass "StorageClass standard exists"
-  else
+  if ! kubectl get storageclass standard >/dev/null 2>&1; then
     fail "StorageClass standard does not exist"
     return 1
   fi
+  pass "StorageClass standard exists"
 
   local provisioner reclaim binding default_class
   provisioner=$(kubectl get sc standard -o jsonpath='{.provisioner}' 2>/dev/null)
@@ -386,6 +397,31 @@ validate_storage_static() {
   [[ "$reclaim" == "Delete" ]] && pass "standard reclaimPolicy is Delete" || fail "unexpected reclaimPolicy: $reclaim"
   [[ "$binding" == "WaitForFirstConsumer" ]] && pass "standard volumeBindingMode is WaitForFirstConsumer" || fail "unexpected volumeBindingMode: $binding"
   [[ "$default_class" == "true" ]] && pass "standard is the default StorageClass" || fail "standard is not marked as default"
+
+  detect_storage_source
+  info "Storage source: $STORAGE_SOURCE${STORAGE_IMAGE:+; image: $STORAGE_IMAGE}"
+
+  if kubectl get deployment local-path-provisioner -n local-path-storage >/dev/null 2>&1 && \
+     kubectl rollout status deployment/local-path-provisioner -n local-path-storage --timeout=5s >/dev/null 2>&1; then
+    pass "Local Path Provisioner Deployment is Ready"
+  else
+    fail "Local Path Provisioner Deployment is not Ready or not found"
+  fi
+
+  case "$STORAGE_SOURCE" in
+    helm)
+      pass "Local Path Provisioner is Helm-managed"
+      ;;
+    kind-builtin)
+      pass "compatible kind-provided Local Path Provisioner detected"
+      ;;
+    existing-non-helm)
+      pass "compatible non-Helm Local Path Provisioner detected"
+      ;;
+    *)
+      fail "could not identify the Local Path Provisioner source"
+      ;;
+  esac
 }
 
 storage_smoke_test() {
@@ -470,6 +506,8 @@ YAML
       sleep 2
     done
     fail "PV $pv still exists after cleanup"
+  else
+    fail "could not identify the dynamically provisioned PV"
   fi
 }
 
