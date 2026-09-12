@@ -6,6 +6,8 @@ RUN_SMOKE=false
 STAGE="all"
 FAILURES=0
 PASSES=0
+CILIUM_HEALTH_TIMEOUT="${CILIUM_HEALTH_TIMEOUT:-180}"
+INGRESS_READY_TIMEOUT="${INGRESS_READY_TIMEOUT:-90}"
 
 usage() {
   cat <<'USAGE'
@@ -59,6 +61,59 @@ fail() {
 
 info() {
   printf '[INFO] %s\n' "$1"
+}
+
+progress_line() {
+  local label="$1" elapsed="$2" timeout="$3" index="$4"
+  local frames='|/-\\'
+  local frame="${frames:index%4:1}"
+  printf '\r[WAIT] %s %s (%ds/%ds)' "$label" "$frame" "$elapsed" "$timeout"
+}
+
+progress_indefinite() {
+  local label="$1" elapsed="$2" index="$3"
+  local frames='|/-\\'
+  local frame="${frames:index%4:1}"
+  printf '\r[WAIT] %s %s (%ds)' "$label" "$frame" "$elapsed"
+}
+
+progress_done() {
+  local label="$1" elapsed="$2"
+  printf '\r[WAIT] %s done (%ds)%*s\n' "$label" "$elapsed" 20 ''
+}
+
+run_with_progress() {
+  local label="$1"
+  shift
+  local output status pid elapsed=0 index=0 rc
+  output=$(mktemp)
+  status=$(mktemp)
+  rm -f "$status"
+
+  (
+    set +e
+    "$@" >"$output" 2>&1
+    printf '%s\n' "$?" >"$status"
+  ) &
+  pid=$!
+
+  while [[ ! -s "$status" ]]; do
+    progress_indefinite "$label" "$elapsed" "$index"
+    sleep 1
+    elapsed=$((elapsed + 1))
+    index=$((index + 1))
+  done
+
+  wait "$pid" 2>/dev/null || true
+  rc=$(cat "$status")
+  progress_done "$label" "$elapsed"
+
+  if (( rc != 0 )); then
+    cat "$output" >&2
+  fi
+
+  rm -f "$output" "$status"
+  return "$rc"
 }
 
 check_cmd() {
@@ -164,6 +219,31 @@ validate_kind_bootstrap() {
   fi
 }
 
+wait_for_cilium_health() {
+  local timeout="$CILIUM_HEALTH_TIMEOUT"
+  local interval=5 elapsed=0 index=0 status=""
+
+  while (( elapsed <= timeout )); do
+    status=$(kubectl exec -n kube-system ds/cilium -c cilium-agent -- cilium-dbg status 2>/dev/null || true)
+    if grep -Eq 'Cluster health:[[:space:]]+3/3 reachable' <<<"$status"; then
+      if (( elapsed > 0 )); then
+        progress_done "Cilium cluster health convergence" "$elapsed"
+      fi
+      CILIUM_STATUS="$status"
+      return 0
+    fi
+
+    progress_line "Cilium cluster health convergence" "$elapsed" "$timeout" "$index"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+    index=$((index + 1))
+  done
+
+  printf '\n'
+  CILIUM_STATUS="$status"
+  return 1
+}
+
 validate_cilium_static() {
   info "Validating Cilium"
 
@@ -199,28 +279,29 @@ validate_cilium_static() {
     fi
   done
 
-  if kubectl rollout status deployment/cilium-operator -n kube-system --timeout=5s >/dev/null 2>&1; then
+  if run_with_progress "cilium-operator readiness" kubectl rollout status deployment/cilium-operator -n kube-system --timeout=30s; then
     pass "cilium-operator Deployment is Ready"
   else
     fail "cilium-operator Deployment is not Ready"
   fi
 
-  local status
-  status=$(kubectl exec -n kube-system ds/cilium -c cilium-agent -- cilium-dbg status 2>/dev/null || true)
-  if grep -Eq 'KubeProxyReplacement:[[:space:]]+True' <<<"$status"; then
+  CILIUM_STATUS=$(kubectl exec -n kube-system ds/cilium -c cilium-agent -- cilium-dbg status 2>/dev/null || true)
+  if grep -Eq 'KubeProxyReplacement:[[:space:]]+True' <<<"$CILIUM_STATUS"; then
     pass "Cilium kube-proxy replacement is enabled"
   else
     fail "Cilium kube-proxy replacement is not reported as True"
   fi
-  if grep -Eq 'Proxy Status:[[:space:]]+OK' <<<"$status"; then
+  if grep -Eq 'Proxy Status:[[:space:]]+OK' <<<"$CILIUM_STATUS"; then
     pass "Cilium proxy status is OK"
   else
     fail "Cilium proxy status is not OK"
   fi
-  if grep -Eq 'Cluster health:[[:space:]]+3/3 reachable' <<<"$status"; then
+
+  if wait_for_cilium_health; then
     pass "Cilium cluster health is 3/3 reachable"
   else
-    fail "Cilium cluster health is not 3/3 reachable"
+    fail "Cilium cluster health did not reach 3/3 within ${CILIUM_HEALTH_TIMEOUT}s"
+    info "Last Cilium health line: $(grep -E 'Cluster health:' <<<"$CILIUM_STATUS" | head -n 1)"
   fi
 
   if kubectl get ingressclass cilium >/dev/null 2>&1; then
@@ -230,10 +311,48 @@ validate_cilium_static() {
   fi
 }
 
+wait_for_ingress_service() {
+  local ns="$1" timeout=120 interval=2 elapsed=0 index=0 svc=""
+  while (( elapsed <= timeout )); do
+    svc=$(kubectl get svc -n "$ns" -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="NodePort" and (.metadata.name | startswith("cilium-ingress"))) | .metadata.name' | head -n 1)
+    if [[ -n "$svc" ]]; then
+      if (( elapsed > 0 )); then
+        progress_done "Cilium dedicated Ingress Service" "$elapsed" >&2
+      fi
+      printf '%s\n' "$svc"
+      return 0
+    fi
+    progress_line "Cilium dedicated Ingress Service" "$elapsed" "$timeout" "$index" >&2
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+    index=$((index + 1))
+  done
+  printf '\n' >&2
+  return 1
+}
+
+wait_for_ingress_http() {
+  local url="$1" timeout="$INGRESS_READY_TIMEOUT" interval=3 elapsed=0 index=0
+  while (( elapsed <= timeout )); do
+    if curl -fsS --connect-timeout 5 -H 'Host: bootstrap.myk8s.local' "$url" >/dev/null 2>&1; then
+      if (( elapsed > 0 )); then
+        progress_done "Cilium Ingress dataplane" "$elapsed"
+      fi
+      return 0
+    fi
+    progress_line "Cilium Ingress dataplane" "$elapsed" "$timeout" "$index"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+    index=$((index + 1))
+  done
+  printf '\n'
+  return 1
+}
+
 network_smoke_test() {
   info "Running active Cilium Service and Ingress smoke test"
   local ns="bootstrap-netcheck-$$"
-  local node node_ip ingress_svc node_port i
+  local node node_ip ingress_svc node_port
 
   kubectl create namespace "$ns" >/dev/null 2>&1 || { fail "could not create network smoke-test namespace"; return; }
 
@@ -314,8 +433,8 @@ YAML
     return
   fi
 
-  if kubectl rollout status deployment/web -n "$ns" --timeout=180s >/dev/null 2>&1 && \
-     kubectl wait --for=condition=Ready pod/client -n "$ns" --timeout=180s >/dev/null 2>&1; then
+  if run_with_progress "network smoke-test web Deployment" kubectl rollout status deployment/web -n "$ns" --timeout=180s && \
+     run_with_progress "network smoke-test client Pod" kubectl wait --for=condition=Ready pod/client -n "$ns" --timeout=180s; then
     pass "network smoke-test Pods are Ready"
   else
     fail "network smoke-test Pods did not become Ready"
@@ -329,13 +448,7 @@ YAML
     fail "ClusterIP Service/DNS smoke test failed"
   fi
 
-  ingress_svc=""
-  for i in $(seq 1 60); do
-    ingress_svc=$(kubectl get svc -n "$ns" -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="NodePort" and (.metadata.name | startswith("cilium-ingress"))) | .metadata.name' | head -n 1)
-    [[ -n "$ingress_svc" ]] && break
-    sleep 2
-  done
-
+  ingress_svc=$(wait_for_ingress_service "$ns" || true)
   if [[ -z "$ingress_svc" ]]; then
     fail "Cilium did not create a dedicated Ingress NodePort Service"
     cleanup_network
@@ -347,10 +460,14 @@ YAML
   node="${CLUSTER_NAME}-worker"
   node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$node" 2>/dev/null || true)
 
-  if [[ -n "$node_ip" && -n "$node_port" ]] && curl -fsS --connect-timeout 5 -H 'Host: bootstrap.myk8s.local' "http://${node_ip}:${node_port}/" >/dev/null 2>&1; then
+  if [[ -n "$node_ip" && -n "$node_port" ]] && wait_for_ingress_http "http://${node_ip}:${node_port}/"; then
     pass "Cilium Ingress works through NodePort from the Ubuntu host"
   else
-    fail "Cilium Ingress NodePort smoke test failed"
+    fail "Cilium Ingress NodePort smoke test failed after ${INGRESS_READY_TIMEOUT}s"
+    info "Ingress diagnostics follow"
+    kubectl get ingress,svc,endpointslice -n "$ns" -o wide 2>/dev/null || true
+    kubectl get ciliumenvoyconfig -n "$ns" 2>/dev/null || true
+    kubectl exec -n kube-system ds/cilium -c cilium-agent -- cilium-dbg service list 2>/dev/null | head -n 80 || true
   fi
 
   cleanup_network
@@ -402,7 +519,7 @@ validate_storage_static() {
   info "Storage source: $STORAGE_SOURCE${STORAGE_IMAGE:+; image: $STORAGE_IMAGE}"
 
   if kubectl get deployment local-path-provisioner -n local-path-storage >/dev/null 2>&1 && \
-     kubectl rollout status deployment/local-path-provisioner -n local-path-storage --timeout=5s >/dev/null 2>&1; then
+     run_with_progress "Local Path Provisioner readiness" kubectl rollout status deployment/local-path-provisioner -n local-path-storage --timeout=30s; then
     pass "Local Path Provisioner Deployment is Ready"
   else
     fail "Local Path Provisioner Deployment is not Ready or not found"
@@ -428,7 +545,7 @@ storage_smoke_test() {
   info "Running active dynamic-storage smoke test"
   local ns="bootstrap-storage-check-$$"
   local pv=""
-  local i
+  local i elapsed=0
 
   kubectl create namespace "$ns" >/dev/null 2>&1 || { fail "could not create storage smoke-test namespace"; return; }
 
@@ -474,7 +591,7 @@ YAML
     return
   fi
 
-  if kubectl wait --for=condition=Ready pod/storage-client -n "$ns" --timeout=180s >/dev/null 2>&1; then
+  if run_with_progress "storage consumer Pod readiness" kubectl wait --for=condition=Ready pod/storage-client -n "$ns" --timeout=180s; then
     pass "PVC consumer Pod became Ready"
   else
     fail "PVC consumer Pod did not become Ready"
@@ -500,11 +617,15 @@ YAML
   if [[ -n "$pv" ]]; then
     for i in $(seq 1 30); do
       if ! kubectl get pv "$pv" >/dev/null 2>&1; then
+        progress_done "PV deletion after PVC cleanup" "$elapsed"
         pass "PV was deleted after PVC cleanup (reclaimPolicy Delete)"
         return
       fi
+      progress_line "PV deletion after PVC cleanup" "$elapsed" 60 "$i"
       sleep 2
+      elapsed=$((elapsed + 2))
     done
+    printf '\n'
     fail "PV $pv still exists after cleanup"
   else
     fail "could not identify the dynamically provisioned PV"
