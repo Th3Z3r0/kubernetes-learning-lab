@@ -14,6 +14,24 @@ What should I expect to see?
 How do I troubleshoot it when it fails?
 ```
 
+## Lab Host Requirements
+
+This lab runs **three kind Kubernetes nodes plus Cilium, Envoy, Ingress, and local storage on one Ubuntu host**.
+
+| Resource | Minimum | Recommended |
+|---|---:|---:|
+| CPU | 4 vCPU | 6-8 vCPU |
+| Memory | 8 GiB | 12-16 GiB |
+| Root disk free space | 20 GiB free | 30+ GiB free |
+| Free inodes | 100,000 | 500,000+ |
+| Linux kernel | 5.10+ | Current Ubuntu LTS kernel |
+| Architecture | amd64 or arm64 | amd64 |
+| OS | Ubuntu | Current Ubuntu LTS |
+
+The bootstrap currently **enforces disk and inode capacity** before building the cluster. CPU/RAM values are lab sizing guidance with headroom for the three-node cluster, Cilium/Envoy, active smoke tests, and later lessons.
+
+See [Lesson 00 Prerequisites](00-prerequisites/README.md#minimum-system-requirements) for the detailed requirements, pre-check commands, network/privilege requirements, and upstream references.
+
 ## Fresh Ubuntu Quick Start
 
 For a completely fresh Ubuntu host, the only manual preparation required before using the repository automation is to install Git and clone this repository:
