@@ -3,6 +3,10 @@
 The manual commands in `LAB.md` are useful for learning and troubleshooting. For a fresh Ubuntu host, the recommended preparation method is:
 
 ```text
+install Git + curl
+        ↓
+clone this repository
+        ↓
 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
@@ -10,6 +14,59 @@ A separate validator checks each stage independently:
 
 ```text
 00-prerequisites/scripts/validate-lab.sh
+```
+
+## Fresh Ubuntu Quick Start
+
+A brand-new Ubuntu host cannot run a script from this repository until the repository exists locally. Therefore the preferred bootstrap entrypoint has one small manual stage first.
+
+Install Git and curl:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl
+```
+
+Clone the repository:
+
+```bash
+cd ~
+git clone https://github.com/Th3Z3r0/kubernetes-learning-lab.git
+cd ~/kubernetes-learning-lab
+```
+
+Verify the clone:
+
+```bash
+git status
+ls 00-prerequisites/scripts/
+```
+
+Make the scripts executable and run the automated bootstrap:
+
+```bash
+chmod +x 00-prerequisites/scripts/*.sh
+./00-prerequisites/scripts/bootstrap-lab.sh
+```
+
+From this point onward, the bootstrap installs/configures the required host and Kubernetes components and validates each stage.
+
+The full first-host workflow is therefore:
+
+```text
+Fresh Ubuntu
+    ↓
+sudo apt-get install git curl
+    ↓
+git clone
+    ↓
+bootstrap-lab.sh
+    ↓
+Docker + kubectl + kind + Helm
+    ↓
+kind + Cilium + storage + namespace
+    ↓
+validation/smoke tests
 ```
 
 ## Design Goal
@@ -111,7 +168,7 @@ The Local Path Helm chart receives the same preflight when it is needed as a fal
 
 ## Normal Usage
 
-From the repository:
+From an already cloned repository:
 
 ```bash
 cd ~/kubernetes-learning-lab
@@ -155,9 +212,11 @@ myk8s namespace
 final validation
 ```
 
-## Starting From a Fresh Ubuntu Host
+## Alternative: Run Bootstrap Before Cloning
 
-If `curl` is already available:
+The preferred method is to install Git and clone the repository first because it is transparent and easy to troubleshoot.
+
+If `curl` is already available, the bootstrap script can also be downloaded directly:
 
 ```bash
 curl -fsSL \
@@ -167,7 +226,7 @@ curl -fsSL \
 bash /tmp/bootstrap-lab.sh
 ```
 
-The script installs Git if required and clones the repository to:
+In this mode the script installs Git if required and clones the repository to:
 
 ```text
 ~/kubernetes-learning-lab
