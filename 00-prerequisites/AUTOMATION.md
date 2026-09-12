@@ -428,7 +428,7 @@ Normal execution reuses an existing kind cluster and validates it instead of del
 bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
-Recreate the cluster intentionally:
+Recreate the cluster intentionally (destroy the existing kind Kubernetes cluster and build a completely new one):
 
 ```bash
 bash 00-prerequisites/scripts/bootstrap-lab.sh \
