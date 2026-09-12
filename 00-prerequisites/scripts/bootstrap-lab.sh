@@ -10,6 +10,10 @@ RECREATE_CLUSTER=false
 UPGRADE_COMPONENTS=false
 TOOLS_ONLY=false
 RUN_SMOKE=true
+MIN_FREE_GIB="${MIN_FREE_GIB:-20}"
+WARN_FREE_GIB="${WARN_FREE_GIB:-30}"
+MIN_FREE_INODES="${MIN_FREE_INODES:-100000}"
+ALLOW_UNTESTED_K8S="${ALLOW_UNTESTED_K8S:-false}"
 
 usage() {
   cat <<'USAGE'
@@ -17,6 +21,8 @@ Usage: bootstrap-lab.sh [options]
 
 Build the Kubernetes learning lab from a fresh Ubuntu host.
 By default, stable releases are discovered from official upstream sources.
+The script selects a kind node image whose Kubernetes minor version is listed
+as e2e-tested by the selected Cilium release.
 
 Options:
   --recreate-cluster     Delete and recreate the kind cluster if it exists
@@ -28,9 +34,17 @@ Options:
 Optional version overrides (environment variables):
   KUBECTL_VERSION        Example: v1.37.0
   KIND_VERSION           Example: v0.33.0
+  KIND_NODE_IMAGE        Digest-pinned kindest/node image override
   HELM_VERSION           Example: v4.3.0
   CILIUM_VERSION         Example: v1.20.1 or 1.20.1
   LOCAL_PATH_VERSION     Fallback Helm chart only; example: v0.0.37
+
+Safety overrides:
+  MIN_FREE_GIB           Minimum free root disk for a full lab (default: 20)
+  WARN_FREE_GIB          Warn below this free root disk value (default: 30)
+  MIN_FREE_INODES        Minimum free root inodes (default: 100000)
+  ALLOW_UNTESTED_K8S     Set true only to allow a Kubernetes minor that the
+                         selected Cilium release does not list as e2e-tested
 
 Other overrides:
   LAB_DIR                Repository location (default: ~/kubernetes-learning-lab)
@@ -78,6 +92,48 @@ pass() { printf '[PASS] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
 die()  { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 
+progress_indefinite() {
+  local label="$1" elapsed="$2" index="$3"
+  local frames='|/-\\'
+  local frame="${frames:index%4:1}"
+  printf '\r[WAIT] %s %s (%ds)' "$label" "$frame" "$elapsed"
+}
+
+progress_done() {
+  local label="$1" elapsed="$2"
+  printf '\r[WAIT] %s done (%ds)%*s\n' "$label" "$elapsed" 20 ''
+}
+
+run_with_progress() {
+  local label="$1"
+  shift
+  local output status pid elapsed=0 index=0 rc
+  output=$(mktemp)
+  status=$(mktemp)
+  rm -f "$status"
+
+  (
+    set +e
+    "$@" >"$output" 2>&1
+    printf '%s\n' "$?" >"$status"
+  ) &
+  pid=$!
+
+  while [[ ! -s "$status" ]]; do
+    progress_indefinite "$label" "$elapsed" "$index"
+    sleep 1
+    elapsed=$((elapsed + 1))
+    index=$((index + 1))
+  done
+
+  wait "$pid" 2>/dev/null || true
+  rc=$(cat "$status")
+  progress_done "$label" "$elapsed"
+  cat "$output"
+  rm -f "$output" "$status"
+  return "$rc"
+}
+
 on_error() {
   local rc=$?
   printf '\n[FAIL] Bootstrap stopped at line %s (exit %s).\n' "${BASH_LINENO[0]:-unknown}" "$rc" >&2
@@ -109,6 +165,9 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 STORAGE_SOURCE="unknown"
 STORAGE_PROVISIONER="unknown"
 STORAGE_IMAGE="unknown"
+KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-}"
+TARGET_KUBERNETES_VERSION="unknown"
+CILIUM_K8S_SUPPORTED=""
 
 log "Host: ${PRETTY_NAME:-Ubuntu}; architecture: $ARCH"
 info "Log file: $LOG_FILE"
@@ -124,6 +183,32 @@ install_base_packages() {
     command -v "$cmd" >/dev/null || die "$cmd was not installed successfully"
   done
   pass "Base packages installed and validated"
+}
+
+preflight_host_capacity() {
+  log "Preflight - Validate host disk capacity"
+  local root_kb avail_kb used_pct total_gib free_gib free_inodes
+  read -r root_kb avail_kb used_pct < <(df -Pk / | awk 'NR==2 {print $2, $4, $5}')
+  total_gib=$((root_kb / 1024 / 1024))
+  free_gib=$((avail_kb / 1024 / 1024))
+  free_inodes=$(df -Pi / | awk 'NR==2 {print $4}')
+
+  info "Root filesystem: ${total_gib} GiB total, ${free_gib} GiB free, ${used_pct} used"
+  info "Root filesystem free inodes: ${free_inodes}"
+
+  if ! $TOOLS_ONLY && (( free_gib < MIN_FREE_GIB )); then
+    die "Only ${free_gib} GiB is free on /. This lab requires at least ${MIN_FREE_GIB} GiB free before kind/Cilium installation."
+  fi
+  if (( free_gib < WARN_FREE_GIB )); then
+    warn "Only ${free_gib} GiB is free on /. ${WARN_FREE_GIB}+ GiB free is recommended for comfortable lab growth."
+  else
+    pass "Root disk free space is sufficient for the lab"
+  fi
+
+  if (( free_inodes < MIN_FREE_INODES )); then
+    die "Only ${free_inodes} inodes are free on /. At least ${MIN_FREE_INODES} are required for container image extraction."
+  fi
+  pass "Root filesystem inode capacity is sufficient"
 }
 
 ensure_repository() {
@@ -153,7 +238,6 @@ ensure_repository() {
   [[ -f "$LAB_DIR/00-prerequisites/scripts/validate-lab.sh" ]] || die "Missing validate-lab.sh in $LAB_DIR"
 
   VALIDATOR="$LAB_DIR/00-prerequisites/scripts/validate-lab.sh"
-  chmod +x "$VALIDATOR" 2>/dev/null || true
 }
 
 github_latest_tag() {
@@ -168,8 +252,65 @@ normalize_v() {
   [[ "$value" == v* ]] && printf '%s\n' "$value" || printf 'v%s\n' "$value"
 }
 
+cilium_supports_minor() {
+  local minor="$1"
+  tr ' ' '\n' <<<"$CILIUM_K8S_SUPPORTED" | grep -Fxq "$minor"
+}
+
+resolve_cilium_kubernetes_matrix() {
+  local compat_url compat version_line
+  compat_url="https://raw.githubusercontent.com/cilium/cilium/${CILIUM_VERSION}/Documentation/network/kubernetes/compatibility.rst"
+  compat=$(curl -fsSL "$compat_url") || die "Could not retrieve Cilium Kubernetes compatibility matrix for ${CILIUM_VERSION}"
+  version_line=$(grep -E '^\|[[:space:]]*[0-9]+\.[0-9]+([[:space:]]*,[[:space:]]*[0-9]+\.[0-9]+)+' <<<"$compat" | head -n 1 || true)
+  CILIUM_K8S_SUPPORTED=$(grep -oE '[0-9]+\.[0-9]+' <<<"$version_line" | sort -Vu | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)
+  [[ -n "$CILIUM_K8S_SUPPORTED" ]] || die "Could not parse tested Kubernetes versions from Cilium ${CILIUM_VERSION} compatibility documentation"
+  pass "Cilium ${CILIUM_VERSION} e2e-tested Kubernetes minors: ${CILIUM_K8S_SUPPORTED}"
+}
+
+select_kind_node_image() {
+  local release_json release_body images candidates best version image minor
+
+  if [[ -n "$KIND_NODE_IMAGE" ]]; then
+    [[ "$KIND_NODE_IMAGE" =~ ^kindest/node:v([0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64}$ ]] || \
+      die "KIND_NODE_IMAGE must be a digest-pinned kindest/node image"
+    version="${BASH_REMATCH[1]}"
+    minor="${version%.*}"
+    if ! cilium_supports_minor "$minor" && [[ "$ALLOW_UNTESTED_K8S" != "true" ]]; then
+      die "KIND_NODE_IMAGE uses Kubernetes $minor, but Cilium ${CILIUM_VERSION} lists only: ${CILIUM_K8S_SUPPORTED}. Set ALLOW_UNTESTED_K8S=true only if you intentionally accept this risk."
+    fi
+    TARGET_KUBERNETES_VERSION="v$version"
+    pass "Using explicit kind node image for Kubernetes ${TARGET_KUBERNETES_VERSION}"
+    return
+  fi
+
+  release_json=$(curl -fsSL "https://api.github.com/repos/kubernetes-sigs/kind/releases/tags/${KIND_VERSION}") || \
+    die "Could not retrieve kind ${KIND_VERSION} release metadata"
+  release_body=$(jq -r '.body // ""' <<<"$release_json")
+  images=$(grep -oE 'kindest/node:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}' <<<"$release_body" | sort -u || true)
+  [[ -n "$images" ]] || die "Could not parse digest-pinned node images from kind ${KIND_VERSION} release notes"
+
+  candidates=""
+  while IFS= read -r image; do
+    [[ -n "$image" ]] || continue
+    version="${image#kindest/node:v}"
+    version="${version%%@*}"
+    minor="${version%.*}"
+    if cilium_supports_minor "$minor"; then
+      candidates+="${version} ${image}"$'\n'
+    fi
+  done <<<"$images"
+
+  best=$(printf '%s' "$candidates" | sed '/^$/d' | sort -V | tail -n 1)
+  [[ -n "$best" ]] || die "kind ${KIND_VERSION} does not publish a node image in Cilium ${CILIUM_VERSION}'s tested Kubernetes minors: ${CILIUM_K8S_SUPPORTED}"
+
+  version="${best%% *}"
+  KIND_NODE_IMAGE="${best#* }"
+  TARGET_KUBERNETES_VERSION="v$version"
+  pass "Selected ${KIND_NODE_IMAGE} for Cilium ${CILIUM_VERSION} compatibility"
+}
+
 resolve_versions() {
-  log "Step 3 - Resolve current stable versions from official sources"
+  log "Step 3 - Resolve stable versions and a compatible Kubernetes node image"
 
   KUBECTL_VERSION="$(normalize_v "${KUBECTL_VERSION:-$(curl -fsSL https://dl.k8s.io/release/stable.txt)}")"
   KIND_VERSION="$(normalize_v "${KIND_VERSION:-$(github_latest_tag kubernetes-sigs/kind)}")"
@@ -187,12 +328,17 @@ resolve_versions() {
     [[ "${pair#*:}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+.-][0-9A-Za-z.-]+)?$ ]] || die "Invalid resolved version: $pair"
   done
 
+  resolve_cilium_kubernetes_matrix
+  select_kind_node_image
+
   printf '%-22s %s\n' "kubectl" "$KUBECTL_VERSION"
   printf '%-22s %s\n' "kind" "$KIND_VERSION"
+  printf '%-22s %s\n' "kind node image" "$KIND_NODE_IMAGE"
+  printf '%-22s %s\n' "Kubernetes target" "$TARGET_KUBERNETES_VERSION"
   printf '%-22s %s\n' "Helm" "$HELM_VERSION"
   printf '%-22s %s\n' "Cilium" "$CILIUM_VERSION"
   printf '%-22s %s\n' "Local Path fallback" "$LOCAL_PATH_VERSION"
-  pass "Stable versions resolved"
+  pass "Stable and mutually compatible versions resolved"
 }
 
 verify_hash() {
@@ -295,7 +441,7 @@ DOCKER_REPO
     for arg in "${ORIGINAL_ARGS[@]}"; do
       printf -v quoted_args '%s %q' "$quoted_args" "$arg"
     done
-    exec sg docker -c "BOOTSTRAP_DOCKER_GROUP_REEXEC=1 LAB_DIR=$(printf %q "$LAB_DIR") CLUSTER_NAME=$(printf %q "$CLUSTER_NAME") bash $(printf %q "$SELF_PATH")${quoted_args}"
+    exec sg docker -c "BOOTSTRAP_DOCKER_GROUP_REEXEC=1 LAB_DIR=$(printf %q "$LAB_DIR") CLUSTER_NAME=$(printf %q "$CLUSTER_NAME") KIND_NODE_IMAGE=$(printf %q "$KIND_NODE_IMAGE") bash $(printf %q "$SELF_PATH")${quoted_args}"
   fi
 
   pass "Current bootstrap process can access Docker without sudo"
@@ -306,7 +452,7 @@ install_cli_tools() {
   install_kubectl "$KUBECTL_VERSION"
   install_kind "$KIND_VERSION"
   install_helm "$HELM_VERSION"
-  "$VALIDATOR" --stage tools
+  bash "$VALIDATOR" --stage tools
 }
 
 version_minor_distance() {
@@ -338,6 +484,20 @@ ensure_kubectl_compatibility() {
   fi
 }
 
+verify_server_cilium_compatibility() {
+  local server version minor
+  server=$(kubectl version -o json | jq -r '.serverVersion.gitVersion')
+  version="${server#v}"
+  minor="${version%.*}"
+  if cilium_supports_minor "$minor"; then
+    pass "Kubernetes $server is in Cilium ${CILIUM_VERSION}'s e2e-tested minor list"
+  elif [[ "$ALLOW_UNTESTED_K8S" == "true" ]]; then
+    warn "Kubernetes $server is outside Cilium ${CILIUM_VERSION}'s e2e-tested minors (${CILIUM_K8S_SUPPORTED}); continuing because ALLOW_UNTESTED_K8S=true"
+  else
+    die "Kubernetes $server is outside Cilium ${CILIUM_VERSION}'s e2e-tested minors: ${CILIUM_K8S_SUPPORTED}"
+  fi
+}
+
 ensure_cluster() {
   log "Step 6 - Create or validate the kind cluster"
   NEW_CLUSTER=false
@@ -352,14 +512,19 @@ ensure_cluster() {
   fi
 
   if ! kind get clusters 2>/dev/null | grep -Fxq "$CLUSTER_NAME"; then
-    kind create cluster --name "$CLUSTER_NAME" --config "$LAB_DIR/00-prerequisites/kind-config.yaml"
+    info "Creating cluster with node image: $KIND_NODE_IMAGE"
+    kind create cluster \
+      --name "$CLUSTER_NAME" \
+      --config "$LAB_DIR/00-prerequisites/kind-config.yaml" \
+      --image "$KIND_NODE_IMAGE"
     NEW_CLUSTER=true
     pass "kind cluster '$CLUSTER_NAME' created"
   fi
 
   kubectl cluster-info >/dev/null
   ensure_kubectl_compatibility
-  "$VALIDATOR" --stage kind-bootstrap
+  verify_server_cilium_compatibility
+  bash "$VALIDATOR" --stage kind-bootstrap
 }
 
 installed_chart_version() {
@@ -403,26 +568,33 @@ install_or_validate_cilium() {
   if [[ -n "$existing" && "$NEW_CLUSTER" == "false" && "$UPGRADE_COMPONENTS" == "false" ]]; then
     info "Cilium $existing is already installed; keeping it. Use --upgrade-components to upgrade to $desired."
     CILIUM_VERSION="v$existing"
+    resolve_cilium_kubernetes_matrix
+    verify_server_cilium_compatibility
   else
     preflight_cilium_chart "$desired"
     api_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$control_plane")
     [[ -n "$api_ip" ]] || die "Could not discover kind control-plane IP"
 
-    helm upgrade --install cilium "$chart" \
-      --version "$desired" \
-      --namespace kube-system \
-      -f "$LAB_DIR/00-prerequisites/cilium-values.yaml" \
-      --set k8sServiceHost="$api_ip" \
-      --set k8sServicePort=6443 \
-      --wait --timeout 10m
+    if ! run_with_progress "Cilium Helm install/upgrade" \
+      helm upgrade --install cilium "$chart" \
+        --version "$desired" \
+        --namespace kube-system \
+        -f "$LAB_DIR/00-prerequisites/cilium-values.yaml" \
+        --set k8sServiceHost="$api_ip" \
+        --set k8sServicePort=6443 \
+        --wait --timeout 10m; then
+      warn "Cilium Helm operation failed. Recent kube-system events:"
+      kubectl get events -n kube-system --sort-by=.lastTimestamp 2>/dev/null | tail -n 40 || true
+      die "Cilium $desired installation did not complete successfully"
+    fi
 
     pass "Cilium $desired installed"
   fi
 
   if $RUN_SMOKE; then
-    "$VALIDATOR" --stage cilium --smoke
+    bash "$VALIDATOR" --stage cilium --smoke
   else
-    "$VALIDATOR" --stage cilium
+    bash "$VALIDATOR" --stage cilium
   fi
 }
 
@@ -478,12 +650,15 @@ install_or_validate_storage() {
       existing=$(installed_chart_version local-path-provisioner local-path-storage local-path-provisioner)
       info "Upgrading Helm-managed Local Path Provisioner ${existing:-unknown} to $desired"
       preflight_local_path_chart "$desired"
-      helm upgrade --install local-path-provisioner "$chart" \
-        --version "$desired" \
-        --namespace local-path-storage \
-        --create-namespace \
-        -f "$LAB_DIR/00-prerequisites/local-path-values.yaml" \
-        --wait --timeout 5m
+      if ! run_with_progress "Local Path Provisioner Helm upgrade" \
+        helm upgrade --install local-path-provisioner "$chart" \
+          --version "$desired" \
+          --namespace local-path-storage \
+          --create-namespace \
+          -f "$LAB_DIR/00-prerequisites/local-path-values.yaml" \
+          --wait --timeout 5m; then
+        die "Local Path Provisioner Helm upgrade failed"
+      fi
       STORAGE_SOURCE="helm"
       detect_storage_source
     else
@@ -500,21 +675,24 @@ install_or_validate_storage() {
 
     info "No compatible dynamic local storage detected; installing the official Local Path Helm chart as fallback"
     preflight_local_path_chart "$desired"
-    helm upgrade --install local-path-provisioner "$chart" \
-      --version "$desired" \
-      --namespace local-path-storage \
-      --create-namespace \
-      -f "$LAB_DIR/00-prerequisites/local-path-values.yaml" \
-      --wait --timeout 5m
+    if ! run_with_progress "Local Path Provisioner Helm install" \
+      helm upgrade --install local-path-provisioner "$chart" \
+        --version "$desired" \
+        --namespace local-path-storage \
+        --create-namespace \
+        -f "$LAB_DIR/00-prerequisites/local-path-values.yaml" \
+        --wait --timeout 5m; then
+      die "Local Path Provisioner Helm installation failed"
+    fi
     STORAGE_SOURCE="helm"
     detect_storage_source
     pass "Local Path Provisioner $desired installed as fallback"
   fi
 
   if $RUN_SMOKE; then
-    "$VALIDATOR" --stage storage --smoke
+    bash "$VALIDATOR" --stage storage --smoke
   else
-    "$VALIDATOR" --stage storage
+    bash "$VALIDATOR" --stage storage
   fi
 
   detect_storage_source
@@ -523,7 +701,7 @@ install_or_validate_storage() {
 create_namespace() {
   log "Step 9 - Create/validate the myk8s namespace"
   kubectl apply -f "$LAB_DIR/00-prerequisites/manifests/namespace-myk8s.yaml"
-  "$VALIDATOR" --stage namespace
+  bash "$VALIDATOR" --stage namespace
 }
 
 save_state() {
@@ -538,7 +716,9 @@ ARCH=${ARCH}
 DOCKER_VERSION=${docker_ver}
 KUBECTL_VERSION=${KUBECTL_VERSION}
 KIND_VERSION=${KIND_VERSION}
+KIND_NODE_IMAGE=${KIND_NODE_IMAGE}
 KUBERNETES_SERVER_VERSION=${server}
+CILIUM_K8S_SUPPORTED=${CILIUM_K8S_SUPPORTED}
 HELM_VERSION=${HELM_VERSION}
 CILIUM_VERSION=${CILIUM_VERSION}
 STORAGE_SOURCE=${STORAGE_SOURCE}
@@ -551,6 +731,7 @@ STATE
   pass "Resolved/installed state recorded in $STATE_DIR/last-bootstrap.env"
 }
 
+preflight_host_capacity
 install_base_packages
 ensure_repository
 resolve_versions
@@ -564,7 +745,11 @@ UBUNTU_VERSION=${VERSION_ID:-unknown}
 ARCH=${ARCH}
 KUBECTL_VERSION=${KUBECTL_VERSION}
 KIND_VERSION=${KIND_VERSION}
+KIND_NODE_IMAGE=${KIND_NODE_IMAGE}
+TARGET_KUBERNETES_VERSION=${TARGET_KUBERNETES_VERSION}
 HELM_VERSION=${HELM_VERSION}
+CILIUM_VERSION=${CILIUM_VERSION}
+CILIUM_K8S_SUPPORTED=${CILIUM_K8S_SUPPORTED}
 LAB_DIR=${LAB_DIR}
 STATE
   log "Host tool preparation completed successfully"
@@ -578,7 +763,7 @@ install_or_validate_storage
 create_namespace
 
 log "Step 10 - Final full environment validation"
-"$VALIDATOR" --stage all
+bash "$VALIDATOR" --stage all
 save_state
 
 log "Bootstrap completed successfully"
@@ -587,6 +772,7 @@ cat <<SUMMARY
 Reference lab is ready:
   kind cluster:       ${CLUSTER_NAME}
   repository:         ${LAB_DIR}
+  kind node image:    ${KIND_NODE_IMAGE}
   Kubernetes server:  $(kubectl version -o json | jq -r '.serverVersion.gitVersion')
   Cilium:             ${CILIUM_VERSION}
   Storage source:     ${STORAGE_SOURCE}
