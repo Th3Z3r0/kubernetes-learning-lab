@@ -134,6 +134,67 @@ A standalone validator is also available:
 bash 00-prerequisites/scripts/validate-lab.sh --stage all --smoke
 ```
 
+### Optional live monitoring during Step 7
+
+When the main bootstrap terminal reaches:
+
+```text
+[BOOTSTRAP] Step 7 - Install/validate Cilium
+```
+
+keep the bootstrap running in that terminal and open one or two additional terminals to observe the cluster converging in real time.
+
+In a second terminal, watch the `kube-system` Pods:
+
+```bash
+cd ~/kubernetes-learning-lab
+kubectl get pods -n kube-system -o wide -w
+```
+
+You should see Cilium/Cilium Envoy Pods start and eventually become `Running` and Ready. CoreDNS may remain `Pending` until Cilium has initialized Pod networking.
+
+In a third terminal, watch Node readiness:
+
+```bash
+kubectl get nodes -w
+```
+
+The expected transition is:
+
+```text
+NotReady
+   ↓
+Cilium initializes the CNI
+   ↓
+Ready
+```
+
+Both commands use `-w` (`--watch`) and continue streaming changes until you stop them with `Ctrl+C`. They are monitoring-only commands and do not modify the cluster.
+
+If Step 7 appears stuck or fails, stop the watch with `Ctrl+C` and inspect recent events in another terminal:
+
+```bash
+kubectl get events -n kube-system \
+  --sort-by=.lastTimestamp | tail -n 40
+```
+
+For deeper Cilium status after the Cilium agent is running:
+
+```bash
+kubectl exec -n kube-system ds/cilium \
+  -c cilium-agent -- cilium-dbg status
+```
+
+Useful states to look for are:
+
+```text
+KubeProxyReplacement: True
+Proxy Status:          OK
+Cluster health:        3/3 reachable
+```
+
+These extra terminals are optional; the bootstrap itself already waits, retries convergence checks, and reports failures. The live views are primarily for learning and troubleshooting.
+
 ## Fresh Ubuntu Starting Point
 
 ```text
@@ -352,67 +413,6 @@ CoreDNS Running
 That temporary `NotReady` state is expected and part of the lab.
 
 Long-running waits show visible `[WAIT]` progress so the bootstrap/validator does not appear frozen while Kubernetes/Cilium converges.
-
-### Optional live monitoring during Step 7
-
-When the main bootstrap terminal reaches:
-
-```text
-[BOOTSTRAP] Step 7 - Install/validate Cilium
-```
-
-keep the bootstrap running in that terminal and open one or two additional terminals to observe the cluster converging in real time.
-
-In a second terminal, watch the `kube-system` Pods:
-
-```bash
-cd ~/kubernetes-learning-lab
-kubectl get pods -n kube-system -o wide -w
-```
-
-You should see Cilium/Cilium Envoy Pods start and eventually become `Running` and Ready. CoreDNS may remain `Pending` until Cilium has initialized Pod networking.
-
-In a third terminal, watch Node readiness:
-
-```bash
-kubectl get nodes -w
-```
-
-The expected transition is:
-
-```text
-NotReady
-   ↓
-Cilium initializes the CNI
-   ↓
-Ready
-```
-
-Both commands use `-w` (`--watch`) and continue streaming changes until you stop them with `Ctrl+C`. They are monitoring-only commands and do not modify the cluster.
-
-If Step 7 appears stuck or fails, stop the watch with `Ctrl+C` and inspect recent events in another terminal:
-
-```bash
-kubectl get events -n kube-system \
-  --sort-by=.lastTimestamp | tail -n 40
-```
-
-For deeper Cilium status after the Cilium agent is running:
-
-```bash
-kubectl exec -n kube-system ds/cilium \
-  -c cilium-agent -- cilium-dbg status
-```
-
-Useful states to look for are:
-
-```text
-KubeProxyReplacement: True
-Proxy Status:          OK
-Cluster health:        3/3 reachable
-```
-
-These extra terminals are optional; the bootstrap itself already waits, retries convergence checks, and reports failures. The live views are primarily for learning and troubleshooting.
 
 ## Cilium Configuration
 
