@@ -48,7 +48,7 @@ Run the automated bootstrap explicitly with Bash:
 bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
-Do **not** run `chmod +x` on the tracked repository scripts. They are intentionally invoked with `bash`. Changing a tracked script from mode `100644` to `100755` can make the working tree dirty and can block operations such as `git pull --rebase`.
+Do **not** change the executable bit on the tracked repository scripts. They are intentionally invoked with `bash`. A tracked file-mode change from `100644` to `100755` can make the working tree dirty and can block operations such as `git pull --rebase`.
 
 From this point onward, the bootstrap installs/configures the required host and Kubernetes components and validates each stage.
 
