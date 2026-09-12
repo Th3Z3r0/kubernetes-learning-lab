@@ -20,7 +20,7 @@ By default, stable releases are discovered from official upstream sources.
 
 Options:
   --recreate-cluster     Delete and recreate the kind cluster if it exists
-  --upgrade-components  Upgrade Cilium/storage on an existing cluster
+  --upgrade-components  Upgrade Helm-managed components after preflight
   --tools-only           Install and validate host tools, then stop
   --no-smoke             Skip active network/Ingress and PVC smoke tests
   -h, --help             Show this help
@@ -30,14 +30,14 @@ Optional version overrides (environment variables):
   KIND_VERSION           Example: v0.33.0
   HELM_VERSION           Example: v4.3.0
   CILIUM_VERSION         Example: v1.20.1 or 1.20.1
-  LOCAL_PATH_VERSION     Example: v0.0.37 or 0.0.37
+  LOCAL_PATH_VERSION     Fallback Helm chart only; example: v0.0.37
 
 Other overrides:
   LAB_DIR                Repository location (default: ~/kubernetes-learning-lab)
   CLUSTER_NAME           kind cluster name (default: kind)
   REPO_URL               Git repository URL
 
-The script records the resolved versions under:
+The script records the resolved/installed state under:
   ~/.local/state/kubernetes-learning-lab/last-bootstrap.env
 USAGE
 }
@@ -106,6 +106,10 @@ mkdir -p "$STATE_DIR"
 LOG_FILE="$STATE_DIR/bootstrap-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+STORAGE_SOURCE="unknown"
+STORAGE_PROVISIONER="unknown"
+STORAGE_IMAGE="unknown"
+
 log "Host: ${PRETTY_NAME:-Ubuntu}; architecture: $ARCH"
 info "Log file: $LOG_FILE"
 
@@ -113,20 +117,13 @@ install_base_packages() {
   log "Step 1 - Install base Ubuntu packages"
   sudo apt-get update
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    ca-certificates \
-    curl \
-    gnupg \
-    git \
-    jq \
-    openssl \
-    tar
+    ca-certificates curl gnupg git jq openssl tar
 
-  command -v curl >/dev/null
-  command -v git >/dev/null
-  command -v jq >/dev/null
-  command -v openssl >/dev/null
-  command -v tar >/dev/null
-  pass "Base packages installed"
+  local cmd
+  for cmd in curl git jq openssl tar; do
+    command -v "$cmd" >/dev/null || die "$cmd was not installed successfully"
+  done
+  pass "Base packages installed and validated"
 }
 
 ensure_repository() {
@@ -180,27 +177,26 @@ resolve_versions() {
   CILIUM_VERSION="$(normalize_v "${CILIUM_VERSION:-$(github_latest_tag cilium/cilium)}")"
   LOCAL_PATH_VERSION="$(normalize_v "${LOCAL_PATH_VERSION:-$(github_latest_tag rancher/local-path-provisioner)}")"
 
+  local pair
   for pair in \
     "kubectl:$KUBECTL_VERSION" \
     "kind:$KIND_VERSION" \
     "helm:$HELM_VERSION" \
     "cilium:$CILIUM_VERSION" \
-    "local-path:$LOCAL_PATH_VERSION"; do
+    "local-path-fallback:$LOCAL_PATH_VERSION"; do
     [[ "${pair#*:}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+.-][0-9A-Za-z.-]+)?$ ]] || die "Invalid resolved version: $pair"
   done
 
-  printf '%-18s %s\n' "kubectl" "$KUBECTL_VERSION"
-  printf '%-18s %s\n' "kind" "$KIND_VERSION"
-  printf '%-18s %s\n' "Helm" "$HELM_VERSION"
-  printf '%-18s %s\n' "Cilium" "$CILIUM_VERSION"
-  printf '%-18s %s\n' "Local Path" "$LOCAL_PATH_VERSION"
-
+  printf '%-22s %s\n' "kubectl" "$KUBECTL_VERSION"
+  printf '%-22s %s\n' "kind" "$KIND_VERSION"
+  printf '%-22s %s\n' "Helm" "$HELM_VERSION"
+  printf '%-22s %s\n' "Cilium" "$CILIUM_VERSION"
+  printf '%-22s %s\n' "Local Path fallback" "$LOCAL_PATH_VERSION"
   pass "Stable versions resolved"
 }
 
 verify_hash() {
-  local file="$1"
-  local checksum_url="$2"
+  local file="$1" checksum_url="$2"
   local expected actual
   expected=$(curl -fsSL "$checksum_url" | awk '{print $1}')
   actual=$(sha256sum "$file" | awk '{print $1}')
@@ -208,45 +204,37 @@ verify_hash() {
 }
 
 install_kubectl() {
-  local version="$1"
-  local tmp
+  local version="$1" tmp installed
   tmp=$(mktemp)
   curl -fsSL -o "$tmp" "https://dl.k8s.io/release/${version}/bin/linux/${ARCH}/kubectl"
   verify_hash "$tmp" "https://dl.k8s.io/release/${version}/bin/linux/${ARCH}/kubectl.sha256"
   sudo install -o root -g root -m 0755 "$tmp" /usr/local/bin/kubectl
   rm -f "$tmp"
-
-  local installed
   installed=$(kubectl version --client -o json | jq -r '.clientVersion.gitVersion')
   [[ "$installed" == "$version" ]] || die "kubectl validation failed: expected $version, got $installed"
   pass "kubectl $installed installed and checksum-validated"
 }
 
 install_kind() {
-  local version="$1"
-  local tmp
+  local version="$1" tmp
   tmp=$(mktemp)
   curl -fsSL -o "$tmp" "https://github.com/kubernetes-sigs/kind/releases/download/${version}/kind-linux-${ARCH}"
   verify_hash "$tmp" "https://github.com/kubernetes-sigs/kind/releases/download/${version}/kind-linux-${ARCH}.sha256sum"
   sudo install -o root -g root -m 0755 "$tmp" /usr/local/bin/kind
   rm -f "$tmp"
-
   kind version | grep -Fq "$version" || die "kind version validation failed"
   pass "kind $version installed and checksum-validated"
 }
 
 install_helm() {
-  local version="$1"
-  local archive="helm-${version}-linux-${ARCH}.tar.gz"
-  local tmpdir
+  local version="$1" archive tmpdir installed
+  archive="helm-${version}-linux-${ARCH}.tar.gz"
   tmpdir=$(mktemp -d)
   curl -fsSL -o "$tmpdir/$archive" "https://get.helm.sh/$archive"
   verify_hash "$tmpdir/$archive" "https://get.helm.sh/${archive}.sha256sum"
   tar -xzf "$tmpdir/$archive" -C "$tmpdir"
   sudo install -o root -g root -m 0755 "$tmpdir/linux-${ARCH}/helm" /usr/local/bin/helm
   rm -rf "$tmpdir"
-
-  local installed
   installed=$(helm version --template '{{ .Version }}')
   [[ "$installed" == "$version" ]] || die "Helm validation failed: expected $version, got $installed"
   pass "Helm $installed installed and checksum-validated"
@@ -275,20 +263,16 @@ DOCKER_REPO
     local conflicts
     conflicts=$(dpkg-query -W -f='${binary:Package} ${Status}\n' \
       docker.io docker-compose docker-compose-v2 docker-doc docker-buildx podman-docker containerd runc 2>/dev/null \
-      | awk '$3=="install" && $4=="ok" && $5=="installed" {print $1}' \
+      | awk '$2=="install" && $3=="ok" && $4=="installed" {print $1}' \
       | tr '\n' ' ' || true)
     if [[ -n "${conflicts// }" ]]; then
-      die "Conflicting Docker/container-runtime packages are installed: $conflicts. This fresh-host bootstrap will not remove existing runtimes automatically."
+      die "Conflicting Docker/container-runtime packages are installed: $conflicts. This bootstrap will not remove existing runtimes automatically."
     fi
   fi
 
   sudo apt-get update
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    docker-ce \
-    docker-ce-cli \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
   sudo systemctl enable --now docker
   sudo systemctl is-active --quiet docker || die "Docker service is not active"
@@ -296,7 +280,7 @@ DOCKER_REPO
   sudo docker run --rm hello-world >/dev/null
   pass "Docker Engine is running and hello-world succeeded"
 
-  if ! getent group docker | grep -Eq "[,:]${USER}(,|$)"; then
+  if ! getent group docker | cut -d: -f4 | tr ',' '\n' | grep -Fxq "$USER"; then
     sudo usermod -aG docker "$USER"
     info "Added $USER to the docker group"
   fi
@@ -307,8 +291,7 @@ DOCKER_REPO
     fi
 
     warn "Current shell has not picked up docker group membership yet. Re-executing bootstrap with the docker group for this run."
-    local quoted_args=""
-    local arg
+    local quoted_args="" arg
     for arg in "${ORIGINAL_ARGS[@]}"; do
       printf -v quoted_args '%s %q' "$quoted_args" "$arg"
     done
@@ -319,7 +302,7 @@ DOCKER_REPO
 }
 
 install_cli_tools() {
-  log "Step 5 - Install latest stable Kubernetes lab CLIs"
+  log "Step 5 - Install current stable Kubernetes lab CLIs"
   install_kubectl "$KUBECTL_VERSION"
   install_kind "$KIND_VERSION"
   install_helm "$HELM_VERSION"
@@ -369,9 +352,7 @@ ensure_cluster() {
   fi
 
   if ! kind get clusters 2>/dev/null | grep -Fxq "$CLUSTER_NAME"; then
-    kind create cluster \
-      --name "$CLUSTER_NAME" \
-      --config "$LAB_DIR/00-prerequisites/kind-config.yaml"
+    kind create cluster --name "$CLUSTER_NAME" --config "$LAB_DIR/00-prerequisites/kind-config.yaml"
     NEW_CLUSTER=true
     pass "kind cluster '$CLUSTER_NAME' created"
   fi
@@ -383,7 +364,9 @@ ensure_cluster() {
 
 installed_chart_version() {
   local release="$1" namespace="$2" prefix="$3"
-  helm list -n "$namespace" -o json 2>/dev/null | jq -r --arg rel "$release" --arg p "$prefix" '.[] | select(.name==$rel) | .chart | sub("^"+$p+"-"; "")' | head -n 1
+  helm list -n "$namespace" -o json 2>/dev/null \
+    | jq -r --arg rel "$release" --arg p "$prefix" '.[] | select(.name==$rel) | .chart | sub("^"+$p+"-"; "")' \
+    | head -n 1
 }
 
 preflight_cilium_chart() {
@@ -431,8 +414,7 @@ install_or_validate_cilium() {
       -f "$LAB_DIR/00-prerequisites/cilium-values.yaml" \
       --set k8sServiceHost="$api_ip" \
       --set k8sServicePort=6443 \
-      --wait \
-      --timeout 10m
+      --wait --timeout 10m
 
     pass "Cilium $desired installed"
   fi
@@ -460,29 +442,73 @@ preflight_local_path_chart() {
   pass "Local Path $version Helm chart passed values and Kubernetes-version preflight"
 }
 
+storage_properties_compatible() {
+  kubectl get sc standard >/dev/null 2>&1 || return 1
+  [[ "$(kubectl get sc standard -o jsonpath='{.provisioner}' 2>/dev/null)" == "rancher.io/local-path" ]] || return 1
+  [[ "$(kubectl get sc standard -o jsonpath='{.reclaimPolicy}' 2>/dev/null)" == "Delete" ]] || return 1
+  [[ "$(kubectl get sc standard -o jsonpath='{.volumeBindingMode}' 2>/dev/null)" == "WaitForFirstConsumer" ]] || return 1
+  [[ "$(kubectl get sc standard -o jsonpath='{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}' 2>/dev/null)" == "true" ]] || return 1
+  kubectl rollout status deployment/local-path-provisioner -n local-path-storage --timeout=5s >/dev/null 2>&1 || return 1
+}
+
+detect_storage_source() {
+  STORAGE_PROVISIONER=$(kubectl get sc standard -o jsonpath='{.provisioner}' 2>/dev/null || echo unknown)
+  STORAGE_IMAGE=$(kubectl get deployment local-path-provisioner -n local-path-storage \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo unknown)
+
+  if helm status local-path-provisioner -n local-path-storage >/dev/null 2>&1; then
+    STORAGE_SOURCE="helm"
+  elif [[ "$STORAGE_IMAGE" == *"kindest/local-path-provisioner:"* ]]; then
+    STORAGE_SOURCE="kind-builtin"
+  else
+    STORAGE_SOURCE="existing-non-helm"
+  fi
+}
+
 install_or_validate_storage() {
   log "Step 8 - Install/validate dynamic local storage"
   local chart="oci://ghcr.io/rancher/local-path-provisioner/charts/local-path-provisioner"
   local desired="${LOCAL_PATH_VERSION#v}"
   local existing=""
 
-  if helm status local-path-provisioner -n local-path-storage >/dev/null 2>&1; then
-    existing=$(installed_chart_version local-path-provisioner local-path-storage local-path-provisioner)
-  fi
+  if storage_properties_compatible; then
+    detect_storage_source
 
-  if [[ -n "$existing" && "$NEW_CLUSTER" == "false" && "$UPGRADE_COMPONENTS" == "false" ]]; then
-    info "Local Path Provisioner $existing is already installed; keeping it. Use --upgrade-components to upgrade to $desired."
-    LOCAL_PATH_VERSION="v$existing"
+    if [[ "$STORAGE_SOURCE" == "helm" && "$UPGRADE_COMPONENTS" == "true" ]]; then
+      existing=$(installed_chart_version local-path-provisioner local-path-storage local-path-provisioner)
+      info "Upgrading Helm-managed Local Path Provisioner ${existing:-unknown} to $desired"
+      preflight_local_path_chart "$desired"
+      helm upgrade --install local-path-provisioner "$chart" \
+        --version "$desired" \
+        --namespace local-path-storage \
+        --create-namespace \
+        -f "$LAB_DIR/00-prerequisites/local-path-values.yaml" \
+        --wait --timeout 5m
+      STORAGE_SOURCE="helm"
+      detect_storage_source
+    else
+      info "Compatible storage already exists; source=$STORAGE_SOURCE. No redundant provisioner will be installed."
+      if [[ "$UPGRADE_COMPONENTS" == "true" && "$STORAGE_SOURCE" != "helm" ]]; then
+        info "--upgrade-components does not replace a compatible non-Helm/kind-provided storage provisioner."
+      fi
+    fi
   else
+    if kubectl get sc standard >/dev/null 2>&1 || \
+       kubectl get deployment local-path-provisioner -n local-path-storage >/dev/null 2>&1; then
+      die "Partial or incompatible local-path storage exists. Refusing to install a second provisioner automatically; inspect StorageClass standard and local-path-storage first."
+    fi
+
+    info "No compatible dynamic local storage detected; installing the official Local Path Helm chart as fallback"
     preflight_local_path_chart "$desired"
     helm upgrade --install local-path-provisioner "$chart" \
       --version "$desired" \
       --namespace local-path-storage \
       --create-namespace \
       -f "$LAB_DIR/00-prerequisites/local-path-values.yaml" \
-      --wait \
-      --timeout 5m
-    pass "Local Path Provisioner $desired installed"
+      --wait --timeout 5m
+    STORAGE_SOURCE="helm"
+    detect_storage_source
+    pass "Local Path Provisioner $desired installed as fallback"
   fi
 
   if $RUN_SMOKE; then
@@ -490,6 +516,8 @@ install_or_validate_storage() {
   else
     "$VALIDATOR" --stage storage
   fi
+
+  detect_storage_source
 }
 
 create_namespace() {
@@ -513,11 +541,14 @@ KIND_VERSION=${KIND_VERSION}
 KUBERNETES_SERVER_VERSION=${server}
 HELM_VERSION=${HELM_VERSION}
 CILIUM_VERSION=${CILIUM_VERSION}
-LOCAL_PATH_VERSION=${LOCAL_PATH_VERSION}
+STORAGE_SOURCE=${STORAGE_SOURCE}
+STORAGE_PROVISIONER=${STORAGE_PROVISIONER}
+STORAGE_IMAGE=${STORAGE_IMAGE}
+LOCAL_PATH_FALLBACK_VERSION=${LOCAL_PATH_VERSION}
 CLUSTER_NAME=${CLUSTER_NAME}
 LAB_DIR=${LAB_DIR}
 STATE
-  pass "Resolved/installed versions recorded in $STATE_DIR/last-bootstrap.env"
+  pass "Resolved/installed state recorded in $STATE_DIR/last-bootstrap.env"
 }
 
 install_base_packages
@@ -558,13 +589,14 @@ Reference lab is ready:
   repository:         ${LAB_DIR}
   Kubernetes server:  $(kubectl version -o json | jq -r '.serverVersion.gitVersion')
   Cilium:             ${CILIUM_VERSION}
+  Storage source:     ${STORAGE_SOURCE}
   StorageClass:       standard
   Namespace:          myk8s
 
 Validation log:
   ${LOG_FILE}
 
-Version record:
+Version/state record:
   ${STATE_DIR}/last-bootstrap.env
 SUMMARY
 
