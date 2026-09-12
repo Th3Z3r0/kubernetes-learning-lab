@@ -17,9 +17,9 @@ sudo apt-get install -y git curl
 cd ~
 git clone https://github.com/Th3Z3r0/kubernetes-learning-lab.git
 cd ~/kubernetes-learning-lab
-
-chmod +x 00-prerequisites/scripts/*.sh
 ```
+
+Do not run `chmod +x` on the tracked repository scripts. Invoke them explicitly with `bash` so their Git file mode remains unchanged.
 
 Verify the clone before continuing:
 
@@ -38,7 +38,7 @@ validate-lab.sh
 After that, the bootstrap handles the remaining host and cluster preparation:
 
 ```bash
-./00-prerequisites/scripts/bootstrap-lab.sh
+bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
 Mental model:
@@ -50,7 +50,7 @@ install Git + curl
     ↓
 git clone repository
     ↓
-bootstrap-lab.sh
+bash bootstrap-lab.sh
     ↓
 all remaining preparation + validation
 ```
@@ -60,7 +60,7 @@ all remaining preparation + validation
 For a fresh Ubuntu host, use the automated bootstrap after cloning the repository:
 
 ```bash
-./00-prerequisites/scripts/bootstrap-lab.sh
+bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
 The manual commands in [LAB.md](LAB.md) remain useful for learning each installation step and troubleshooting.
@@ -70,7 +70,7 @@ Automation behavior and validation stages are documented in [AUTOMATION.md](AUTO
 A standalone validator is also available:
 
 ```bash
-./00-prerequisites/scripts/validate-lab.sh --stage all --smoke
+bash 00-prerequisites/scripts/validate-lab.sh --stage all --smoke
 ```
 
 ## Fresh Ubuntu Starting Point
@@ -150,6 +150,8 @@ Rancher Local Path Provisioner fallback
 Docker Engine comes from Docker's official Ubuntu `stable` APT repository.
 
 Downloaded CLI binaries are SHA-256 validated. After kind creates the cluster, kubectl client/server version skew is checked and corrected when necessary.
+
+The bootstrap also reads the selected Cilium release's official Kubernetes compatibility matrix and chooses the highest digest-pinned Kubernetes node image published by the selected kind release that falls within Cilium's e2e-tested minor versions.
 
 Cilium is Helm-preflighted against the Kubernetes server version before installation. The Local Path Helm chart is preflighted only when the cluster does not already provide compatible storage.
 
@@ -234,7 +236,7 @@ kind
 └── kind-worker2
 ```
 
-By default, the automation uses the current stable tagged kind release. A specific version can be supplied for exact reproduction.
+By default, the automation uses the current stable tagged kind release and selects a compatible digest-pinned node image. A specific version/image can be supplied for exact reproduction.
 
 ## Why Helm?
 
@@ -287,6 +289,8 @@ CoreDNS Running
 ```
 
 That temporary `NotReady` state is expected and part of the lab.
+
+Long-running waits show visible `[WAIT]` progress so the bootstrap/validator does not appear frozen while Kubernetes/Cilium converges.
 
 ## Cilium Configuration
 
@@ -415,7 +419,7 @@ Automated fresh-host setup
 → install Git + curl
 → clone repository
 → AUTOMATION.md
-→ bootstrap-lab.sh
+→ bash bootstrap-lab.sh
 
 Manual learning/troubleshooting setup
 → LAB.md
