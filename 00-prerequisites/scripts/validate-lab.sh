@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+ORIGINAL_ARGS=("$@")
+SELF_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 CLUSTER_NAME="${CLUSTER_NAME:-kind}"
 RUN_SMOKE=false
 STAGE="all"
@@ -63,6 +65,10 @@ info() {
   printf '[INFO] %s\n' "$1"
 }
 
+warn() {
+  printf '[WARN] %s\n' "$1" >&2
+}
+
 progress_line() {
   local label="$1" elapsed="$2" timeout="$3" index="$4"
   local frames='|/-\\'
@@ -116,6 +122,47 @@ run_with_progress() {
   return "$rc"
 }
 
+docker_accessible() {
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
+current_user_configured_for_docker_group() {
+  getent group docker 2>/dev/null \
+    | cut -d: -f4 \
+    | tr ',' '\n' \
+    | grep -Fxq "$USER"
+}
+
+ensure_docker_access_or_reexec() {
+  command -v docker >/dev/null 2>&1 || return 0
+  docker_accessible && return 0
+
+  if current_user_configured_for_docker_group; then
+    if [[ "${VALIDATOR_DOCKER_GROUP_REEXEC:-0}" == "1" ]]; then
+      warn "Docker is still inaccessible after refreshing docker group membership for this validator run."
+      return 1
+    fi
+
+    if ! command -v sg >/dev/null 2>&1; then
+      warn "The user is configured in the docker group, but this shell has not picked it up and 'sg' is unavailable. Log out and back in before validating Docker/kind."
+      return 1
+    fi
+
+    warn "Current shell has not picked up docker group membership yet."
+    info "Re-executing validator with the docker group for this run."
+
+    local quoted_args="" arg
+    for arg in "${ORIGINAL_ARGS[@]}"; do
+      printf -v quoted_args '%s %q' "$quoted_args" "$arg"
+    done
+
+    exec sg docker -c "VALIDATOR_DOCKER_GROUP_REEXEC=1 CLUSTER_NAME=$(printf %q "$CLUSTER_NAME") CILIUM_HEALTH_TIMEOUT=$(printf %q "$CILIUM_HEALTH_TIMEOUT") INGRESS_READY_TIMEOUT=$(printf %q "$INGRESS_READY_TIMEOUT") bash $(printf %q "$SELF_PATH")${quoted_args}"
+  fi
+
+  warn "Docker is inaccessible and $USER is not configured as a member of the docker group."
+  return 1
+}
+
 check_cmd() {
   if command -v "$1" >/dev/null 2>&1; then
     pass "$1 is installed: $(command -v "$1")"
@@ -132,7 +179,7 @@ validate_tools() {
   done
 
   if command -v docker >/dev/null 2>&1; then
-    if docker info >/dev/null 2>&1; then
+    if docker_accessible; then
       pass "Docker daemon is reachable by the current user"
     else
       fail "Docker daemon is not reachable by the current user"
@@ -168,6 +215,12 @@ validate_kind_bootstrap() {
 
   if ! command -v kind >/dev/null 2>&1 || ! command -v kubectl >/dev/null 2>&1; then
     fail "kind and kubectl are required for cluster validation"
+    return
+  fi
+
+  if ! docker_accessible; then
+    fail "cannot inspect kind cluster '$CLUSTER_NAME' because Docker is not accessible by the current shell"
+    info "If Docker was just installed and $USER was added to the docker group, log out and back in or rerun the validator so it can refresh the group for this run."
     return
   fi
 
@@ -458,9 +511,21 @@ YAML
 
   node_port=$(kubectl get svc "$ingress_svc" -n "$ns" -o json | jq -r '.spec.ports[] | select(.port==80) | .nodePort')
   node="${CLUSTER_NAME}-worker"
-  node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$node" 2>/dev/null || true)
 
-  if [[ -n "$node_ip" && -n "$node_port" ]] && wait_for_ingress_http "http://${node_ip}:${node_port}/"; then
+  if ! docker_accessible; then
+    fail "cannot test Cilium Ingress NodePort from the Ubuntu host because Docker is not accessible; the validator cannot inspect the kind node IP"
+    cleanup_network
+    return
+  fi
+
+  node_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$node" 2>/dev/null || true)
+  if [[ -z "$node_ip" ]]; then
+    fail "could not discover the Docker IP for kind node '$node'; skipping the NodePort wait instead of reporting a false dataplane timeout"
+    cleanup_network
+    return
+  fi
+
+  if [[ -n "$node_port" ]] && wait_for_ingress_http "http://${node_ip}:${node_port}/"; then
     pass "Cilium Ingress works through NodePort from the Ubuntu host"
   else
     fail "Cilium Ingress NodePort smoke test failed after ${INGRESS_READY_TIMEOUT}s"
@@ -646,6 +711,12 @@ validate_namespace() {
     fail "current identity cannot create Pods in myk8s"
   fi
 }
+
+case "$STAGE" in
+  tools|kind-bootstrap|cilium|all)
+    ensure_docker_access_or_reexec || true
+    ;;
+esac
 
 case "$STAGE" in
   tools)
