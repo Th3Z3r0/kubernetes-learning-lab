@@ -6,11 +6,27 @@ Prepare a reproducible Kubernetes lab environment before starting Lesson 01, inc
 
 The reference environment is intentionally built so the networking and storage behavior used in later lessons is explicit and repeatable.
 
+## Recommended Setup Method
+
+For a fresh Ubuntu host, use the automated bootstrap:
+
+```bash
+./00-prerequisites/scripts/bootstrap-lab.sh
+```
+
+The manual commands in [LAB.md](LAB.md) remain useful for learning each installation step and for troubleshooting.
+
+The automation design and all validation stages are documented in [AUTOMATION.md](AUTOMATION.md).
+
+A standalone validator is also available:
+
+```bash
+./00-prerequisites/scripts/validate-lab.sh --stage all --smoke
+```
+
 ## Fresh Ubuntu Starting Point
 
 Lesson 00 can start from a newly installed Ubuntu system.
-
-The setup flow is:
 
 ```text
 Fresh Ubuntu
@@ -30,8 +46,6 @@ Local Path Provisioner
 myk8s namespace
 ```
 
-The hands-on runbook installs and verifies the required tools before creating Kubernetes.
-
 ## Required Tools
 
 The lab uses:
@@ -43,16 +57,6 @@ kubectl
 kind
 Helm
 ```
-
-Pinned/tested command-line versions for this reference setup:
-
-```text
-kubectl:  1.36.1
-kind:     0.33.0
-Helm:     4.2.4
-```
-
-Docker Engine is installed from Docker's official Ubuntu APT repository rather than pinning a particular package build.
 
 Supporting Ubuntu packages include:
 
@@ -66,9 +70,41 @@ openssl
 tar
 ```
 
-The runbook supports the common `amd64` and `arm64` Linux architectures and verifies downloaded `kubectl` and `kind` binaries with SHA-256 checksums.
+The automation supports the common `amd64` and `arm64` Linux architectures.
 
 The Cilium CLI is not required for this learning path. Cilium troubleshooting uses `cilium-dbg` inside the Cilium agent Pods.
+
+## Version Strategy
+
+There are two complementary goals:
+
+```text
+Manual learning path
+→ document known/tested versions and exact commands
+
+Automated new-host preparation
+→ discover current stable upstream versions
+→ validate compatibility before installation
+→ record the versions actually used
+```
+
+The automated bootstrap resolves stable releases from official upstream sources for:
+
+```text
+kubectl
+kind
+Helm
+Cilium
+Rancher Local Path Provisioner
+```
+
+Docker Engine is installed from Docker's official Ubuntu `stable` APT repository.
+
+Downloaded command-line binaries are SHA-256 validated. After kind creates the cluster, kubectl client/server version skew is checked and corrected if necessary.
+
+Cilium and storage charts are preflight-rendered against the Kubernetes server version before installation. If a future chart changes the values expected by this lab, the script stops instead of silently creating a different architecture.
+
+For exact reproduction or troubleshooting, versions can still be overridden explicitly. See [AUTOMATION.md](AUTOMATION.md).
 
 ## Reference Architecture
 
@@ -79,13 +115,14 @@ kind cluster
 ├── default kind CNI disabled
 ├── kube-proxy disabled
 │
-├── Cilium 1.20.1
+├── Cilium
 │   ├── CNI
 │   ├── kube-proxy replacement
+│   ├── eBPF Service / NodePort dataplane
 │   ├── Envoy
 │   └── Ingress controller
 │
-└── Rancher Local Path Provisioner 0.0.37
+└── Rancher Local Path Provisioner
     └── default StorageClass: standard
 ```
 
@@ -118,7 +155,7 @@ kind-worker2
 
 Docker therefore has to be healthy before kind can create the cluster.
 
-The lab configures the current Linux user to access Docker without `sudo`, because kind is intended to be run as the normal lab user.
+The bootstrap configures the normal Linux user for Docker access instead of running the lab as root.
 
 ## Why kubectl?
 
@@ -132,7 +169,7 @@ Kubernetes API Server
 Kubernetes objects
 ```
 
-The reference setup pins `kubectl` to the Kubernetes version used by the tested kind cluster.
+The automated bootstrap keeps the kubectl client within Kubernetes-supported minor-version skew of the kind cluster API server.
 
 ## Why kind?
 
@@ -145,7 +182,7 @@ kind
 └── kind-worker2
 ```
 
-The reference setup pins kind `v0.33.0` so the cluster build is repeatable.
+By default, the automated bootstrap uses the current stable tagged kind release. A specific version can be provided when exact reproduction is required.
 
 ## Why Helm?
 
@@ -207,7 +244,7 @@ The reusable Cilium settings are stored in:
 00-prerequisites/cilium-values.yaml
 ```
 
-The Kubernetes API server address is not stored in that file because the kind control-plane container IP can change between cluster recreations. The hands-on lab discovers it dynamically and passes it to Helm as `k8sServiceHost` and `k8sServicePort`.
+The Kubernetes API server address is not stored in that file because the kind control-plane container IP can change between cluster recreations. The bootstrap discovers it dynamically and passes it to Helm as `k8sServiceHost` and `k8sServicePort`.
 
 Key settings:
 
@@ -242,6 +279,36 @@ The reusable Helm values are stored in:
 
 This storage is intended for learning. It is local to a kind Node and should not be confused with highly available cloud or distributed storage.
 
+## Validation Model
+
+The automated setup does not treat a successful installer exit code as enough proof.
+
+Each major stage is followed by validation:
+
+```text
+Host tools
+→ binaries + Docker daemon + hello-world
+
+kind
+→ 3 nodes + API reachable + kube-proxy absent
+
+Cilium
+→ Nodes Ready + DaemonSets Ready + KPR=True
+→ Service/DNS smoke test
+→ Ingress/NodePort smoke test
+
+Storage
+→ StorageClass properties
+→ real PVC/PV provisioning
+→ write/read test
+→ Delete reclaim test
+
+Namespace
+→ myk8s Active + authorization check
+```
+
+See [AUTOMATION.md](AUTOMATION.md) for all validator commands.
+
 ## Lab Namespace
 
 The lessons use `myk8s` so application resources are grouped separately from system components:
@@ -260,8 +327,34 @@ The namespace manifest is:
 00-prerequisites/manifests/namespace-myk8s.yaml
 ```
 
+## Prerequisite Files
+
+```text
+00-prerequisites/
+├── README.md
+├── LAB.md
+├── AUTOMATION.md
+├── kind-config.yaml
+├── cilium-values.yaml
+├── local-path-values.yaml
+├── manifests/
+│   └── namespace-myk8s.yaml
+└── scripts/
+    ├── bootstrap-lab.sh
+    └── validate-lab.sh
+```
+
 ## Hands-on Setup
 
-Use [LAB.md](LAB.md) for the complete fresh-Ubuntu tool installation, cluster creation, Cilium installation, storage provisioning, verification, and namespace setup procedure.
+Choose either path:
 
-After the prerequisite lab is complete, continue with [Lesson 01 — Pod Fundamentals](../01-pod-fundamentals/README.md).
+```text
+Automated fresh-host setup
+→ AUTOMATION.md
+→ bootstrap-lab.sh
+
+Manual learning/troubleshooting setup
+→ LAB.md
+```
+
+After the prerequisite environment is complete, continue with [Lesson 01 — Pod Fundamentals](../01-pod-fundamentals/README.md).
