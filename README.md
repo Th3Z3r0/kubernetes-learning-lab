@@ -29,7 +29,7 @@ cd ~/kubernetes-learning-lab
 bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
-Run the repository scripts explicitly with `bash`. Do not use `chmod +x` on the tracked scripts; changing their executable bit can make the Git working tree appear modified and block commands such as `git pull --rebase`.
+Run the repository scripts explicitly with `bash`. Do not change the executable bit on the tracked scripts; file-mode changes can make the Git working tree appear modified and block commands such as `git pull --rebase`.
 
 The bootstrap then installs/configures the remaining host tools and lab infrastructure and validates every major stage.
 
