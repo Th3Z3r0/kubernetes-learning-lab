@@ -14,6 +14,44 @@ What should I expect to see?
 How do I troubleshoot it when it fails?
 ```
 
+## Fresh Ubuntu Quick Start
+
+For a completely fresh Ubuntu host, the only manual preparation required before using the repository automation is to install Git and clone this repository:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl
+
+cd ~
+git clone https://github.com/Th3Z3r0/kubernetes-learning-lab.git
+cd ~/kubernetes-learning-lab
+
+chmod +x 00-prerequisites/scripts/*.sh
+./00-prerequisites/scripts/bootstrap-lab.sh
+```
+
+The bootstrap then installs/configures the remaining host tools and lab infrastructure and validates every major stage.
+
+```text
+Fresh Ubuntu
+    ↓
+Git + curl
+    ↓
+git clone
+    ↓
+bootstrap-lab.sh
+    ↓
+Docker + kubectl + kind + Helm
+    ↓
+kind + Cilium + storage
+    ↓
+validation / smoke tests
+    ↓
+Ready for Lesson 01
+```
+
+See [Lesson 00 Automation](00-prerequisites/AUTOMATION.md) for version selection, compatibility guards, validation stages, rerun behavior, and troubleshooting.
+
 ## How to Use This Repository
 
 Run the lessons in order. Unless a lesson says otherwise, run commands from the repository root:
@@ -47,7 +85,7 @@ For someone following the repository from scratch, **use `LAB.md` as the primary
 
 ## Reference Lab Environment
 
-The current reference environment uses:
+The reference architecture is:
 
 ```text
 kind
@@ -60,18 +98,22 @@ kind
 ├── default kind CNI disabled
 ├── kube-proxy disabled
 │
-├── Cilium 1.20.1
+├── Cilium
 │   ├── CNI
 │   ├── kube-proxy replacement
 │   ├── eBPF Service / NodePort dataplane
 │   ├── Envoy
 │   └── Cilium Ingress Controller
 │
-├── Rancher Local Path Provisioner 0.0.37
-│   └── default StorageClass: standard
+├── dynamic local storage
+│   ├── preferred: compatible kind-provided Local Path Provisioner
+│   └── fallback: Rancher Local Path Provisioner via Helm
+│       └── default StorageClass: standard
 │
 └── lab namespace: myk8s
 ```
+
+The automated bootstrap discovers current stable upstream versions and validates compatibility before using them. Exact versions can be overridden when reproducibility requires pinning.
 
 Reference node layout:
 
@@ -81,12 +123,14 @@ kind-worker
 kind-worker2
 ```
 
-Lesson 00 contains the complete reproducible cluster setup including:
+Lesson 00 contains the complete reproducible setup including:
 
 ```text
 00-prerequisites/kind-config.yaml
 00-prerequisites/cilium-values.yaml
 00-prerequisites/local-path-values.yaml
+00-prerequisites/scripts/bootstrap-lab.sh
+00-prerequisites/scripts/validate-lab.sh
 ```
 
 The kind configuration deliberately disables the default CNI and kube-proxy. Nodes are expected to be temporarily `NotReady` until Cilium is installed.
@@ -222,11 +266,15 @@ kubernetes-learning-lab/
 ├── 00-prerequisites/
 │   ├── README.md
 │   ├── LAB.md
+│   ├── AUTOMATION.md
 │   ├── kind-config.yaml
 │   ├── cilium-values.yaml
 │   ├── local-path-values.yaml
-│   └── manifests/
-│       └── namespace-myk8s.yaml
+│   ├── manifests/
+│   │   └── namespace-myk8s.yaml
+│   └── scripts/
+│       ├── bootstrap-lab.sh
+│       └── validate-lab.sh
 │
 ├── 01-pod-fundamentals/
 │   ├── README.md
@@ -344,13 +392,15 @@ Verify the dependency at that stage
 
 ### Lesson 00 — Prerequisites
 
+- Fresh Ubuntu bootstrap entrypoint
+- Automated host-tool preparation and validation
 - Reproducible three-node kind topology
 - Default CNI disabled
 - kube-proxy disabled
 - Cilium CNI and kube-proxy replacement
 - Cilium Envoy and IngressClass
-- Rancher local-path dynamic storage
-- `standard` default StorageClass
+- Compatible dynamic local storage with `standard` default StorageClass
+- Active networking and storage smoke tests
 - `myk8s` namespace
 
 ### Lesson 01 — Pod Fundamentals
