@@ -4,7 +4,7 @@
 
 Prepare a reproducible Kubernetes lab environment before starting Lesson 01, including the required tooling on a fresh Ubuntu host.
 
-The reference environment is intentionally built so the networking and storage behavior used in later lessons is explicit and repeatable.
+The reference environment is intentionally built so networking, Service dataplane, Ingress, and storage behavior are explicit and testable.
 
 ## Recommended Setup Method
 
@@ -14,9 +14,9 @@ For a fresh Ubuntu host, use the automated bootstrap:
 ./00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
-The manual commands in [LAB.md](LAB.md) remain useful for learning each installation step and for troubleshooting.
+The manual commands in [LAB.md](LAB.md) remain useful for learning each installation step and troubleshooting.
 
-The automation design and all validation stages are documented in [AUTOMATION.md](AUTOMATION.md).
+Automation behavior and validation stages are documented in [AUTOMATION.md](AUTOMATION.md).
 
 A standalone validator is also available:
 
@@ -25,8 +25,6 @@ A standalone validator is also available:
 ```
 
 ## Fresh Ubuntu Starting Point
-
-Lesson 00 can start from a newly installed Ubuntu system.
 
 ```text
 Fresh Ubuntu
@@ -41,7 +39,7 @@ kind cluster
     ↓
 Cilium
     ↓
-Local Path Provisioner
+compatible dynamic local storage
     ↓
 myk8s namespace
 ```
@@ -70,9 +68,9 @@ openssl
 tar
 ```
 
-The automation supports the common `amd64` and `arm64` Linux architectures.
+The automation supports common `amd64` and `arm64` Linux architectures.
 
-The Cilium CLI is not required for this learning path. Cilium troubleshooting uses `cilium-dbg` inside the Cilium agent Pods.
+The Cilium CLI is not required. Cilium troubleshooting uses `cilium-dbg` inside the Cilium agent Pods.
 
 ## Version Strategy
 
@@ -80,31 +78,31 @@ There are two complementary goals:
 
 ```text
 Manual learning path
-→ document known/tested versions and exact commands
+→ document known/tested commands
 
 Automated new-host preparation
 → discover current stable upstream versions
 → validate compatibility before installation
-→ record the versions actually used
+→ record the versions and implementations actually used
 ```
 
-The automated bootstrap resolves stable releases from official upstream sources for:
+The automated bootstrap resolves stable upstream releases for:
 
 ```text
 kubectl
 kind
 Helm
 Cilium
-Rancher Local Path Provisioner
+Rancher Local Path Provisioner fallback
 ```
 
-Docker Engine is installed from Docker's official Ubuntu `stable` APT repository.
+Docker Engine comes from Docker's official Ubuntu `stable` APT repository.
 
-Downloaded command-line binaries are SHA-256 validated. After kind creates the cluster, kubectl client/server version skew is checked and corrected if necessary.
+Downloaded CLI binaries are SHA-256 validated. After kind creates the cluster, kubectl client/server version skew is checked and corrected when necessary.
 
-Cilium and storage charts are preflight-rendered against the Kubernetes server version before installation. If a future chart changes the values expected by this lab, the script stops instead of silently creating a different architecture.
+Cilium is Helm-preflighted against the Kubernetes server version before installation. The Local Path Helm chart is preflighted only when the cluster does not already provide compatible storage.
 
-For exact reproduction or troubleshooting, versions can still be overridden explicitly. See [AUTOMATION.md](AUTOMATION.md).
+Exact versions can still be overridden explicitly for troubleshooting or reproduction. See [AUTOMATION.md](AUTOMATION.md).
 
 ## Reference Architecture
 
@@ -122,8 +120,11 @@ kind cluster
 │   ├── Envoy
 │   └── Ingress controller
 │
-└── Rancher Local Path Provisioner
-    └── default StorageClass: standard
+└── dynamic local storage
+    ├── preferred: compatible kind-provided Local Path Provisioner
+    └── fallback: Rancher Local Path Provisioner via Helm
+         ↓
+       default StorageClass: standard
 ```
 
 Reference network ranges:
@@ -153,7 +154,7 @@ kind-worker
 kind-worker2
 ```
 
-Docker therefore has to be healthy before kind can create the cluster.
+Docker must therefore be healthy before kind can create the cluster.
 
 The bootstrap configures the normal Linux user for Docker access instead of running the lab as root.
 
@@ -169,7 +170,7 @@ Kubernetes API Server
 Kubernetes objects
 ```
 
-The automated bootstrap keeps the kubectl client within Kubernetes-supported minor-version skew of the kind cluster API server.
+The automated bootstrap keeps the kubectl client within the supported minor-version skew of the kind cluster API server.
 
 ## Why kind?
 
@@ -182,23 +183,23 @@ kind
 └── kind-worker2
 ```
 
-By default, the automated bootstrap uses the current stable tagged kind release. A specific version can be provided when exact reproduction is required.
+By default, the automation uses the current stable tagged kind release. A specific version can be supplied for exact reproduction.
 
 ## Why Helm?
 
-Helm is used to install and configure infrastructure components used by the lab:
+Helm is required for Cilium and is also available as the fallback installation method for Local Path Provisioner:
 
 ```text
 Helm
 ├── Cilium
-└── Rancher Local Path Provisioner
+└── Local Path Provisioner fallback only
 ```
 
 Reusable values files are stored in the repository instead of relying on long one-off command lines.
 
 ## Why Disable the Default CNI and kube-proxy?
 
-The lab uses Cilium as both the CNI and the Kubernetes Service dataplane.
+The lab uses Cilium as both the CNI and Kubernetes Service dataplane.
 
 ```text
 kind default CNI   → disabled
@@ -208,11 +209,11 @@ Cilium eBPF        → provides Service / NodePort handling
 Envoy              → provides L7 / Ingress dataplane
 ```
 
-This avoids running kube-proxy and Cilium kube-proxy replacement at the same time and makes later Service and Ingress experiments easier to reason about.
+This avoids mixing kube-proxy with Cilium kube-proxy replacement and makes later Service and Ingress experiments easier to reason about.
 
 ## Expected Bootstrap Behavior
 
-Immediately after the kind cluster is created, the Nodes are expected to be `NotReady` because no CNI has been installed yet.
+Immediately after kind cluster creation, Nodes are expected to be `NotReady` because no CNI has been installed yet.
 
 ```text
 kind cluster created
@@ -234,17 +235,17 @@ Nodes Ready
 CoreDNS Running
 ```
 
-This temporary `NotReady` state is expected and is part of the lab.
+That temporary `NotReady` state is expected and part of the lab.
 
 ## Cilium Configuration
 
-The reusable Cilium settings are stored in:
+Reusable Cilium settings are stored in:
 
 ```text
 00-prerequisites/cilium-values.yaml
 ```
 
-The Kubernetes API server address is not stored in that file because the kind control-plane container IP can change between cluster recreations. The bootstrap discovers it dynamically and passes it to Helm as `k8sServiceHost` and `k8sServicePort`.
+The Kubernetes API server address is not hard-coded because the kind control-plane container IP can change. The bootstrap discovers it dynamically and passes it to Helm as `k8sServiceHost` and `k8sServicePort`.
 
 Key settings:
 
@@ -258,9 +259,7 @@ Ingress LB mode            = dedicated
 
 ## Storage Configuration
 
-Lesson 05 requires dynamic persistent-volume provisioning.
-
-The reference lab installs Rancher Local Path Provisioner and creates this StorageClass:
+Lesson 05 expects dynamic local storage with these properties:
 
 ```text
 Name:               standard
@@ -268,29 +267,39 @@ Provisioner:        rancher.io/local-path
 Default:            yes
 ReclaimPolicy:      Delete
 VolumeBindingMode:  WaitForFirstConsumer
-Backing type:       local HostPath-style storage
+Backing type:       local Node storage
 ```
 
-The reusable Helm values are stored in:
+Modern kind node images can already provide a compatible Local Path Provisioner. The automation therefore checks behavior before installing anything:
+
+```text
+compatible standard StorageClass + Ready provisioner?
+        |
+        +-- yes --> use it
+        |
+        +-- no  --> install Rancher Local Path via Helm fallback
+```
+
+The fallback values remain in:
 
 ```text
 00-prerequisites/local-path-values.yaml
 ```
 
-This storage is intended for learning. It is local to a kind Node and should not be confused with highly available cloud or distributed storage.
+This avoids creating a redundant second `rancher.io/local-path` provisioner.
+
+Local-path storage is intended only for this learning environment. It is local to a kind Node and is not highly available cloud/distributed storage.
 
 ## Validation Model
 
-The automated setup does not treat a successful installer exit code as enough proof.
-
-Each major stage is followed by validation:
+A successful install command is not considered enough proof.
 
 ```text
 Host tools
 → binaries + Docker daemon + hello-world
 
 kind
-→ 3 nodes + API reachable + kube-proxy absent
+→ 3 Nodes + API reachable + kube-proxy absent
 
 Cilium
 → Nodes Ready + DaemonSets Ready + KPR=True
@@ -298,7 +307,9 @@ Cilium
 → Ingress/NodePort smoke test
 
 Storage
-→ StorageClass properties
+→ required StorageClass behavior
+→ Ready local-path provisioner
+→ identify source: kind-builtin / Helm / existing non-Helm
 → real PVC/PV provisioning
 → write/read test
 → Delete reclaim test
@@ -307,11 +318,11 @@ Namespace
 → myk8s Active + authorization check
 ```
 
-See [AUTOMATION.md](AUTOMATION.md) for all validator commands.
+See [AUTOMATION.md](AUTOMATION.md) for validator commands.
 
 ## Lab Namespace
 
-The lessons use `myk8s` so application resources are grouped separately from system components:
+The lessons use `myk8s` so application resources are separate from system components:
 
 ```text
 Kubernetes Cluster
