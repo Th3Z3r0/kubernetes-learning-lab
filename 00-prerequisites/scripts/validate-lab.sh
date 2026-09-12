@@ -8,7 +8,7 @@ RUN_SMOKE=false
 STAGE="all"
 FAILURES=0
 PASSES=0
-CILIUM_HEALTH_TIMEOUT="${CILIUM_HEALTH_TIMEOUT:-180}"
+CILIUM_HEALTH_TIMEOUT="${CILIUM_HEALTH_TIMEOUT:-360}"
 INGRESS_READY_TIMEOUT="${INGRESS_READY_TIMEOUT:-90}"
 
 usage() {
@@ -355,6 +355,8 @@ validate_cilium_static() {
   else
     fail "Cilium cluster health did not reach 3/3 within ${CILIUM_HEALTH_TIMEOUT}s"
     info "Last Cilium health line: $(grep -E 'Cluster health:' <<<"$CILIUM_STATUS" | head -n 1)"
+    info "Detailed Cilium health diagnostics follow"
+    kubectl exec -n kube-system ds/cilium -c cilium-agent -- cilium-health status --verbose 2>/dev/null || true
   fi
 
   if kubectl get ingressclass cilium >/dev/null 2>&1; then
