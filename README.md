@@ -26,9 +26,10 @@ cd ~
 git clone https://github.com/Th3Z3r0/kubernetes-learning-lab.git
 cd ~/kubernetes-learning-lab
 
-chmod +x 00-prerequisites/scripts/*.sh
-./00-prerequisites/scripts/bootstrap-lab.sh
+bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
+
+Run the repository scripts explicitly with `bash`. Do not use `chmod +x` on the tracked scripts; changing their executable bit can make the Git working tree appear modified and block commands such as `git pull --rebase`.
 
 The bootstrap then installs/configures the remaining host tools and lab infrastructure and validates every major stage.
 
@@ -39,7 +40,7 @@ Git + curl
     ↓
 git clone
     ↓
-bootstrap-lab.sh
+bash bootstrap-lab.sh
     ↓
 Docker + kubectl + kind + Helm
     ↓
