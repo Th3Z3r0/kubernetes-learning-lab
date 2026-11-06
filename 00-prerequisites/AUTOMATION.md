@@ -254,6 +254,37 @@ The validator retries Cilium health convergence instead of checking it only once
 
 If Cilium installation fails, the bootstrap prints recent `kube-system` events to make problems such as image extraction or `no space left on device` visible immediately.
 
+## One-command Lab Check and Recovery
+
+Use `lab-manager.sh` as the main entry point whenever you return to the lab. It orchestrates the existing bootstrap and validator rather than duplicating their checks.
+
+```bash
+cd ~/kubernetes-learning-lab
+git pull --ff-only origin main
+
+# Read-only lab check, including live networking and storage smoke tests
+bash 00-prerequisites/scripts/lab-manager.sh check
+
+# Check first; if unhealthy, run safe bootstrap and validate again
+bash 00-prerequisites/scripts/lab-manager.sh recover
+
+# Optional: validate one stage only (read-only)
+bash 00-prerequisites/scripts/lab-manager.sh check --stage cilium
+
+# Optional: check without smoke tests
+bash 00-prerequisites/scripts/lab-manager.sh check --no-smoke
+```
+
+**Normal workflow:** `check` runs `validate-lab.sh --stage all --smoke`. `recover` runs that check first, collects diagnostics if it fails, invokes the existing non-destructive `bootstrap-lab.sh` (including automatic Cilium API endpoint drift repair), and repeats the full check. Successful checks never trigger a bootstrap. Failures generate a timestamped log in `~/.local/state/kubernetes-learning-lab/`.
+
+**Destructive, explicit last resort only:**
+
+```bash
+bash 00-prerequisites/scripts/lab-manager.sh recreate --confirm-delete
+```
+
+This deletes the current kind cluster and its Kubernetes objects/local storage, then rebuilds and validates. `recover` never passes `--recreate-cluster` implicitly. Updating Git is a separate operation so the running wrapper never modifies its own source files.
+
 ## Normal Usage
 
 From an already cloned repository:
