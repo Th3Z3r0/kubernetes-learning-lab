@@ -559,21 +559,53 @@ install_or_validate_cilium() {
   local desired="${CILIUM_VERSION#v}"
   local existing=""
   local control_plane="${CLUSTER_NAME}-control-plane"
-  local api_ip
+  local api_ip current_values configured_ip configured_port repaired_values
+
+  # kind's Docker IP addresses can change after host/Docker restarts.
+  # Discover the current control-plane address on every bootstrap run.
+  api_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$control_plane")
+  [[ -n "$api_ip" ]] || die "Could not discover kind control-plane IP for $control_plane"
 
   if helm status cilium -n kube-system >/dev/null 2>&1; then
     existing=$(installed_chart_version cilium kube-system cilium)
   fi
 
   if [[ -n "$existing" && "$NEW_CLUSTER" == "false" && "$UPGRADE_COMPONENTS" == "false" ]]; then
-    info "Cilium $existing is already installed; keeping it. Use --upgrade-components to upgrade to $desired."
     CILIUM_VERSION="v$existing"
     resolve_cilium_kubernetes_matrix
     verify_server_cilium_compatibility
+
+    # Read the installed release's user-provided values, not the latest chart defaults.
+    current_values=$(helm get values cilium -n kube-system -o json) || die "Could not read installed Cilium Helm values"
+    configured_ip=$(jq -r '.k8sServiceHost // ""' <<<"$current_values")
+    configured_port=$(jq -r '.k8sServicePort // "" | tostring' <<<"$current_values")
+    info "Cilium API endpoint: configured=${configured_ip:-unset}:${configured_port:-unset}; current=$api_ip:6443"
+
+    if [[ "$configured_ip" != "$api_ip" || "$configured_port" != "6443" ]]; then
+      warn "Cilium Kubernetes API endpoint drift detected; repairing the existing Helm release without changing its version"
+      if ! run_with_progress "Cilium API endpoint recovery" \
+        helm upgrade cilium "$chart" \
+          --version "$existing" \
+          --namespace kube-system \
+          --reuse-values \
+          --set k8sServiceHost="$api_ip" \
+          --set k8sServicePort=6443 \
+          --wait --timeout 10m; then
+        warn "Cilium API endpoint recovery failed. Recent kube-system events:"
+        kubectl get events -n kube-system --sort-by=.lastTimestamp 2>/dev/null | tail -n 40 || true
+        die "Cilium API endpoint recovery failed; inspect the Helm release and Cilium logs"
+      fi
+
+      repaired_values=$(helm get values cilium -n kube-system -o json) || die "Could not verify repaired Cilium Helm values"
+      [[ "$(jq -r '.k8sServiceHost // ""' <<<"$repaired_values")" == "$api_ip" &&
+         "$(jq -r '.k8sServicePort // "" | tostring' <<<"$repaired_values")" == "6443" ]] ||
+        die "Cilium Helm values do not reflect the repaired API endpoint"
+      pass "Cilium $existing API endpoint repaired to $api_ip:6443; existing chart version and values preserved"
+    else
+      info "Existing Cilium $existing has the correct API endpoint; keeping it. Use --upgrade-components to upgrade to $desired."
+    fi
   else
     preflight_cilium_chart "$desired"
-    api_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$control_plane")
-    [[ -n "$api_ip" ]] || die "Could not discover kind control-plane IP"
 
     if ! run_with_progress "Cilium Helm install/upgrade" \
       helm upgrade --install cilium "$chart" \
