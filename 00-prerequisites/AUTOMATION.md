@@ -428,6 +428,29 @@ Normal execution reuses an existing kind cluster and validates it instead of del
 bash 00-prerequisites/scripts/bootstrap-lab.sh
 ```
 
+### Recover Cilium API endpoint drift after a host restart
+
+kind control-plane Docker IP addresses can change when Ubuntu or Docker restarts. This lab configures Cilium to contact the Kubernetes API directly at the kind control-plane IP because kube-proxy is disabled. An old `k8sServiceHost` can cause Cilium agents/operators to fail with `connect: connection refused` even when Kubernetes Nodes show `Ready`.
+
+On every full bootstrap rerun, Step 7 now:
+
+1. Discovers the **current** IP of `<cluster>-control-plane` using Docker.
+2. Reads the installed Cilium release's `k8sServiceHost` and `k8sServicePort` from Helm values.
+3. If both match the current IP and port `6443`, retains the release without modification.
+4. If either differs, runs a Helm upgrade at the **same installed Cilium chart version** using `--reuse-values`, changing only the API host and port, and waits for readiness.
+5. Verifies the saved Helm endpoint values and runs the normal strict Cilium health and network/Ingress checks.
+
+This recovery does **not** delete the kind cluster or application resources. A requested `--upgrade-components` still follows the existing explicit upgrade path instead. If recovery or subsequent validation fails, the bootstrap stops rather than treating the Helm release as healthy.
+
+To inspect the endpoint manually:
+
+```bash
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' kind-control-plane
+helm get values cilium -n kube-system -o yaml | grep -E 'k8sServiceHost|k8sServicePort'
+```
+
+For example, if Cilium is configured for `172.18.0.4:6443` but the actual kind control-plane is now `172.18.0.3:6443`, the bootstrap automatically updates Cilium to the new address. The Docker IPs in this example are illustrative, not permanent assignments.
+
 Recreate the cluster intentionally (destroy the existing kind Kubernetes cluster and build a completely new one):
 
 ```bash
