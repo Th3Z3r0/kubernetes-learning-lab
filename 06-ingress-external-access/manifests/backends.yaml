@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lesson06-web-content
+  namespace: myk8s
+data:
+  index.html: |
+    Hello from Lesson 06 Web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lesson06-web
+  namespace: myk8s
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lesson06-web
+  template:
+    metadata:
+      labels:
+        app: lesson06-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.28-alpine
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+          volumeMounts:
+            - name: web-content
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+      volumes:
+        - name: web-content
+          configMap:
+            name: lesson06-web-content
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lesson06-web
+  namespace: myk8s
+spec:
+  type: ClusterIP
+  selector:
+    app: lesson06-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lesson06-api
+  namespace: myk8s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lesson06-api
+  template:
+    metadata:
+      labels:
+        app: lesson06-api
+    spec:
+      containers:
+        - name: api
+          image: hashicorp/http-echo:1.0.0
+          args:
+            - "-listen=:5678"
+            - "-text=Hello from Lesson 06 API"
+          ports:
+            - containerPort: 5678
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lesson06-api
+  namespace: myk8s
+spec:
+  type: ClusterIP
+  selector:
+    app: lesson06-api
+  ports:
+    - name: http
+      port: 5678
+      targetPort: 5678

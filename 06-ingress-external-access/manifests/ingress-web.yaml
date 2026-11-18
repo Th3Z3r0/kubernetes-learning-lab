@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lesson06-web
+  namespace: myk8s
+  annotations:
+    ingress.cilium.io/loadbalancer-mode: dedicated
+    ingress.cilium.io/service-type: NodePort
+spec:
+  ingressClassName: cilium
+  rules:
+    - host: app.myk8s.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lesson06-web
+                port:
+                  number: 80

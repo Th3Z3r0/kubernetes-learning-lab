@@ -98,8 +98,8 @@ For someone following the repository from scratch, **use `LAB.md` as the primary
 | 03 | Labels, Selectors, Service, EndpointSlice, and Kubernetes DNS | [README](03-labels-selectors-service/README.md) | [LAB](03-labels-selectors-service/LAB.md) | Completed |
 | 04 | ConfigMap and Secret | [README](04-configmap-secret/README.md) | [LAB](04-configmap-secret/LAB.md) | Completed |
 | 05 | Storage: Volume, PV, PVC, and StorageClass | [README](05-storage/README.md) | [LAB](05-storage/LAB.md) | Completed |
-| 06 | Ingress and External Access | — | — | Next |
-| 07 | RBAC and Kubernetes Security | — | — | Planned |
+| 06 | Ingress and External Access | [README](06-ingress-external-access/README.md) | [LAB](06-ingress-external-access/LAB.md) | Completed |
+| 07 | RBAC and Kubernetes Security | — | — | Next |
 | 08 | NetworkPolicy | — | — | Planned |
 
 ## Reference Lab Environment
@@ -327,17 +327,28 @@ kubernetes-learning-lab/
 │       ├── broken-config-pod.yaml
 │       └── broken-secret-pod.yaml
 │
-└── 05-storage/
+├── 05-storage/
+│   ├── README.md
+│   ├── LAB.md
+│   └── manifests/
+│       ├── emptydir-pod.yaml
+│       ├── pvc-demo.yaml
+│       ├── pvc-pod.yaml
+│       ├── broken-pvc.yaml
+│       ├── fixed-pvc.yaml
+│       ├── broken-storage-pod.yaml
+│       └── emptydir-restart.yaml
+│
+└── 06-ingress-external-access/
     ├── README.md
     ├── LAB.md
     └── manifests/
-        ├── emptydir-pod.yaml
-        ├── pvc-demo.yaml
-        ├── pvc-pod.yaml
-        ├── broken-pvc.yaml
-        ├── fixed-pvc.yaml
-        ├── broken-storage-pod.yaml
-        └── emptydir-restart.yaml
+        ├── backends.yaml
+        ├── curl-client.yaml
+        ├── service-web-nodeport.yaml
+        ├── ingress-web.yaml
+        ├── ingress-hosts.yaml
+        └── ingress-paths.yaml
 ```
 
 Future lesson directories will be added only when their labs begin.
@@ -472,6 +483,14 @@ Verify the dependency at that stage
 - Broken StorageClass troubleshooting
 - `Pending` as expected waiting state vs actual provisioning failure
 
+### Lesson 06 — Ingress and External Access
+
+- ClusterIP and NodePort access to the same web workload
+- Dedicated Cilium Ingress with Envoy and an allocated HTTP NodePort
+- Hostname and path routing with separate web and API backends
+- Service selector break and recovery, with direct and Ingress checks
+- Reference observations from EndpointSlice, the Cilium Service table, and Envoy EDS
+
 ## Next
 
-**Lesson 06 — Ingress and External Access**
+**Lesson 07 — RBAC and Kubernetes Security**
